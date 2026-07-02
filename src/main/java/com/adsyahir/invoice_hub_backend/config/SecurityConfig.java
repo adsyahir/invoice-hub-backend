@@ -61,7 +61,7 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(request -> request
-                        .requestMatchers("/auth/register", "/auth/login", "/auth/refresh", "/auth/logout").permitAll()
+                        .requestMatchers("/auth/register", "/auth/login", "/auth/refresh", "/auth/logout","/teams/invite/accept").permitAll()
                         .anyRequest().authenticated())
                 // No httpBasic/formLogin: this is a JWT API consumed by a SPA.
                 // 401 (bare, no WWW-Authenticate header) when unauthenticated so the

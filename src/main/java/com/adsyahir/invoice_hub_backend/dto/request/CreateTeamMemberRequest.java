@@ -6,6 +6,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+/**
+ * Body for POST /teams/invite/accept (token comes as a query param).
+ * Password match is enforced client-side for UX and re-checked here via @PasswordMatches.
+ */
 @Data
 @PasswordMatches
 public class CreateTeamMemberRequest implements PasswordMatching {
