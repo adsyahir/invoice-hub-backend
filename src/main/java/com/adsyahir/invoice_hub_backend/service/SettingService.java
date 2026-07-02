@@ -40,22 +40,7 @@ public class SettingService {
 
         return toResponse(tenantRepo.save(tenant));
     }
-
-    @Transactional(readOnly = true)
-    public List<TeamMemberResponse> teamList(Long tenantId){
-        return userRepo.findAllByTenantId(tenantId).stream()
-                .map(this::toTeamMember)
-                .toList();
-    }
-
-    private TeamMemberResponse toTeamMember(User u) {
-        return TeamMemberResponse.builder()
-                .id(u.getId())              // public handle (add uuid to User if not there)
-                .fullName(u.getFullName())
-                .email(u.getEmail())
-                .role(u.getRole().getName())    // role name string
-                .build();
-    }
+    
 
     private TenantResponse toResponse(Tenant t) {
         return TenantResponse.builder()

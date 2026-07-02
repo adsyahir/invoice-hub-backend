@@ -1,0 +1,9 @@
+services:
+
+  mailpit:
+    image: axllent/mailpit
+    container_name: invoicehub-mailpit
+    ports:
+      - "1026:1025" # SMTP port, Spring Boot connects here
+      - "8026:8025" # Web UI, you view emails here
+    restart: unless-stopped

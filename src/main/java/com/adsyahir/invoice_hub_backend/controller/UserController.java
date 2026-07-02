@@ -2,17 +2,16 @@ package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.dto.LoginRequest;
 import com.adsyahir.invoice_hub_backend.dto.RegisterRequest;
-import com.adsyahir.invoice_hub_backend.model.Permission;
+import com.adsyahir.invoice_hub_backend.dto.response.AuthResult;
 import com.adsyahir.invoice_hub_backend.model.User;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
+import com.adsyahir.invoice_hub_backend.service.CookieService;
 import com.adsyahir.invoice_hub_backend.service.JwtService;
 import com.adsyahir.invoice_hub_backend.service.RefreshTokenService;
 import com.adsyahir.invoice_hub_backend.service.UserService;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -27,6 +26,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.List;
@@ -47,54 +47,18 @@ public class UserController {
     @Autowired
     private JwtService jwtService;
 
-    @Value("${app.cookie.secure:false}")
-    private boolean cookieSecure;
-
-    private static final int REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // 7 days
-
-    /** Sets (or, with value=null + maxAge=0, clears) the httpOnly refresh cookie. */
-    private void setRefreshCookie(HttpServletResponse response, String value, int maxAge) {
-        Cookie cookie = new Cookie("refreshToken", value);
-        cookie.setHttpOnly(true);
-        cookie.setSecure(cookieSecure); // false on http dev, true behind HTTPS
-        cookie.setPath("/api/auth");
-        cookie.setMaxAge(maxAge);
-        cookie.setAttribute("SameSite", "Lax");
-        response.addCookie(cookie);
-    }
+    @Autowired
+    private CookieService cookieService;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request,
                                       HttpServletResponse response) {
 
-        User user = service.registerOrganization(request);
 
-        // Sign them straight in, just like login: short-lived access token in the
-        // body, long-lived refresh token in an httpOnly cookie.
-        String token = jwtService.generateToken(user.getEmail());
-        String refreshToken = jwtService.generateRefreshToken(user.getEmail());
+        AuthResult result = service.registerAndIssueTokens(request);
+        cookieService.setRefreshCookie(response, result.refreshToken(), CookieService.REFRESH_COOKIE_MAX_AGE);
 
-        setRefreshCookie(response, refreshToken, REFRESH_COOKIE_MAX_AGE);
-        refreshTokenService.addRefreshToken(user, refreshToken);
-
-        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
-                "message", "Organization created successfully",
-                "token", token,
-                "user", Map.of(
-                        "id", user.getId(),
-                        "fullName", user.getFullName(),
-                        "email", user.getEmail(),
-                        "role", user.getRole().getName()
-                ),
-                "tenant", Map.of(
-                        "uuid", user.getTenant().getUuid(),
-                        "name", user.getTenant().getName(),
-                        "slug", user.getTenant().getSlug(),
-                        "plan", user.getTenant().getPlan(),
-                        "status", user.getTenant().getStatus()
-                ),
-                "permissions", permissionNames(user)
-        ));
+        return ResponseEntity.status(HttpStatus.CREATED).body(result.auth());
     }
 
     @PostMapping("/login")
@@ -107,44 +71,14 @@ public class UserController {
                     .body(Map.of("message", "Invalid email or password"));
         }
 
-        // Auth succeeded — load the persisted user (with tenant) for the response.
+        // Auth succeeded — load the persisted user (with tenant), then mint tokens
+        // and build the same payload shape as /register.
         User user = service.getByEmail(credentials.getEmail());
 
-        String token = jwtService.generateToken(user.getEmail());
-        String refreshToken = jwtService.generateRefreshToken(user.getEmail());
+        AuthResult result = service.issueTokens(user);
+        cookieService.setRefreshCookie(response, result.refreshToken(), CookieService.REFRESH_COOKIE_MAX_AGE);
 
-        setRefreshCookie(response, refreshToken, REFRESH_COOKIE_MAX_AGE);
-        refreshTokenService.addRefreshToken(user, refreshToken);
-
-        // Same shape as /register so the frontend can populate the session.
-        Map<String, Object> body = new HashMap<>();
-        body.put("message", "User login successfully");
-        body.put("token", token);
-        body.put("user", Map.of(
-                "id", user.getId(),
-                "fullName", user.getFullName(),
-                "email", user.getEmail(),
-                "role", user.getRole().getName()
-        ));
-        body.put("permissions", permissionNames(user));
-        if (user.getTenant() != null) {
-            body.put("tenant", Map.of(
-                    "uuid", user.getTenant().getUuid(),
-                    "name", user.getTenant().getName(),
-                    "slug", user.getTenant().getSlug(),
-                    "plan", user.getTenant().getPlan(),
-                    "status", user.getTenant().getStatus()
-            ));
-        }
-        return ResponseEntity.ok(body);
-    }
-
-    /** The permission names granted by the user's role, sorted. */
-    private List<String> permissionNames(User user) {
-        return user.getRole().getPermissions().stream()
-                .map(Permission::getName)
-                .sorted()
-                .toList();
+        return ResponseEntity.ok(result.auth());
     }
 
     /**
@@ -154,37 +88,10 @@ public class UserController {
     @GetMapping("/me")
     public ResponseEntity<?> me(@AuthenticationPrincipal UserPrincipal principal) {
         if (principal == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Not authenticated"));
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not authenticated");
         }
-
-        User user = principal.getUser();
-
-        // The role's permissions (drop the ROLE_* marker authority).
-        List<String> permissions = principal.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .filter(a -> !a.startsWith("ROLE_"))
-                .sorted()
-                .toList();
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("user", Map.of(
-                "id", user.getId(),
-                "fullName", user.getFullName(),
-                "email", user.getEmail(),
-                "role", user.getRole().getName()
-        ));
-        body.put("permissions", permissions);
-        if (user.getTenant() != null) {
-            body.put("tenant", Map.of(
-                    "uuid", user.getTenant().getUuid(),
-                    "name", user.getTenant().getName(),
-                    "slug", user.getTenant().getSlug(),
-                    "plan", user.getTenant().getPlan(),
-                    "status", user.getTenant().getStatus()
-            ));
-        }
-        return ResponseEntity.ok(body);
+        // Same raw shape as login/register, minus the token (no new token is issued here).
+        return ResponseEntity.ok(service.toAuthResponse(principal.getUser(), null));
     }
 
     @PostMapping("/refresh")
@@ -224,7 +131,7 @@ public class UserController {
         }
 
         // Clear the cookie (same attributes, maxAge 0).
-        setRefreshCookie(response, null, 0);
+        cookieService.setRefreshCookie(response, null, 0);
 
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }

@@ -2,7 +2,6 @@ package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.dao.PaymentRepo;
 import com.adsyahir.invoice_hub_backend.dto.request.CreatePaymentRequest;
-import com.adsyahir.invoice_hub_backend.dto.response.ApiResponse;
 import com.adsyahir.invoice_hub_backend.model.Payment;
 import com.adsyahir.invoice_hub_backend.model.User;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
@@ -31,8 +30,8 @@ public class PaymentController {
     public ResponseEntity<?> create(@Valid @RequestBody CreatePaymentRequest request, @AuthenticationPrincipal UserPrincipal principal){
 
         Payment payment = paymentService.create(request,principal.getUser());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(Map.of(
+        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
                 "id", payment.getUuid()
-        )));
+        ));
     }
 }

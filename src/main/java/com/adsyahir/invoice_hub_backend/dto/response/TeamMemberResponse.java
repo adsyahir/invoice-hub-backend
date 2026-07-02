@@ -11,7 +11,7 @@ import java.util.UUID;
 @Setter
 @Builder
 public class TeamMemberResponse {
-    private Long id;
+    private UUID uuid;
     private String fullName;
     private String email;
     private String role;        // "TENANT_ADMIN", "ACCOUNTANT", ...

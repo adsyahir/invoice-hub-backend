@@ -1,7 +1,6 @@
 package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.dto.request.CreateInvoiceRequest;
-import com.adsyahir.invoice_hub_backend.dto.response.ApiResponse;
 import com.adsyahir.invoice_hub_backend.model.Invoice;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.InvoiceService;
@@ -51,13 +50,13 @@ public class InvoiceController {
     @GetMapping
     @PreAuthorize("hasAuthority('invoice:read')")
     public ResponseEntity<?> list(@AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(ApiResponse.success(invoiceService.list(principal.getUser())));
+        return ResponseEntity.ok(invoiceService.list(principal.getUser()));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('invoice:read')")
     public ResponseEntity<?> show(@PathVariable UUID id,
                                   @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(ApiResponse.success(invoiceService.show(id, principal.getUser())));
+        return ResponseEntity.ok(invoiceService.show(id, principal.getUser()));
     }
 }

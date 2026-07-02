@@ -76,4 +76,7 @@ public class User {
     public @Nullable CharSequence getPassword() {
         return password;
     }
+
+    public void save() {
+    }
 }

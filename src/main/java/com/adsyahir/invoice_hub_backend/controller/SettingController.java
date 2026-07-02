@@ -1,7 +1,6 @@
 package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.dto.request.UpdateOrganizationRequest;
-import com.adsyahir.invoice_hub_backend.dto.response.ApiResponse;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.SettingService;
 import jakarta.validation.Valid;
@@ -28,14 +27,7 @@ public class SettingController {
         if (!uuid.equals(principal.getUser().getTenant().getUuid())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant not found");
         }
-        return ResponseEntity.ok(ApiResponse.success(settingService.updateOrganization(uuid, request, principal.getUser().getId())));
-    }
-
-    @GetMapping("/teams")
-    public ResponseEntity<?>  listTeam(@AuthenticationPrincipal UserPrincipal principal){
-
-        settingService.teamList(principal.getUser().getTenant().getId());
-        return ResponseEntity.ok(Map.of("data","hehe"));
+        return ResponseEntity.ok(settingService.updateOrganization(uuid, request, principal.getUser().getId()));
     }
 
 }

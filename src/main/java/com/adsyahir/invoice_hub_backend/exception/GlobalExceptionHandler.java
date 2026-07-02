@@ -1,8 +1,9 @@
 package com.adsyahir.invoice_hub_backend.exception;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,58 +11,78 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Central error handling. Every response is an RFC 9457 Problem Details document
+ * (application/problem+json) with the standard members — type, title, status,
+ * detail, instance — plus an "errors" extension for field-level validation.
+ */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // @PreAuthorize denials (method security). Without this, Spring MVC forwards
-    // the exception to /error, which re-enters the filter chain anonymous and
-    // returns 401 — masking a genuine 403. Handle it here for a proper 403.
+    // Base URI for machine-readable problem "type" links. Doesn't need to resolve
+    // to a live page, but conventionally documents the error category.
+    private static final String TYPE_BASE = "https://api.invoicehub.com/problems/";
+
+    private ProblemDetail problem(HttpStatus status, String type, String title, String detail,
+                                  HttpServletRequest request) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(status, detail);
+        pd.setType(URI.create(TYPE_BASE + type));
+        pd.setTitle(title);
+        pd.setInstance(URI.create(request.getRequestURI()));
+        return pd;
+    }
+
+    // @PreAuthorize denials (method security). Handled here so a genuine 403 isn't
+    // masked as a 401 by the /error re-dispatch through the filter chain.
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<?> handleAccessDenied(AccessDeniedException ex) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(Map.of("message", "You do not have permission to perform this action"));
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        return problem(HttpStatus.FORBIDDEN, "access-denied", "Access denied",
+                "You do not have permission to perform this action", request);
     }
 
-    // Duplicate slug/email and other business-rule conflicts.
+    // Business-rule conflicts (duplicate slug/email, etc.). Carries field errors.
     @ExceptionHandler(ValidationException.class)
-    public ResponseEntity<?> handleValidation(ValidationException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("errors", ex.getErrors()));
+    public ProblemDetail handleValidation(ValidationException ex, HttpServletRequest request) {
+        ProblemDetail pd = problem(HttpStatus.CONFLICT, "validation-error", "Validation failed",
+                "One or more values conflict with existing data", request);
+        pd.setProperty("errors", ex.getErrors());
+        return pd;
     }
 
-    // Bean-validation failures on @Valid request bodies (@NotBlank, @Email, …).
-    // Flattened into the same { errors: { field: message } } shape the
-    // frontend maps onto its form fields.
+    // Bean-validation failures on @Valid bodies (@NotBlank, @Email, …). The
+    // "errors" extension is a { field: message } map the frontend maps to inputs.
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<?> handleBeanValidation(MethodArgumentNotValidException ex) {
+    public ProblemDetail handleBeanValidation(MethodArgumentNotValidException ex, HttpServletRequest request) {
         Map<String, String> errors = new HashMap<>();
         for (FieldError error : ex.getBindingResult().getFieldErrors()) {
             errors.putIfAbsent(error.getField(), error.getDefaultMessage());
         }
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of("errors", errors));
+        ProblemDetail pd = problem(HttpStatus.BAD_REQUEST, "validation-error", "Validation failed",
+                "One or more fields are invalid", request);
+        pd.setProperty("errors", errors);
+        return pd;
     }
 
-    // Intentional status exceptions (e.g. our 404s from orElseThrow). MUST come
-    // before the generic Exception handler below, otherwise that one would catch
-    // these too and turn every 404 into a 500.
+    // Intentional status exceptions (our orElseThrow 404s/409s/410s). MUST precede
+    // the generic Exception handler, or that would turn every 404 into a 500.
     @ExceptionHandler(ResponseStatusException.class)
-    public ResponseEntity<?> handleResponseStatus(ResponseStatusException ex) {
-        String message = ex.getReason() != null ? ex.getReason() : "Request failed";
-        return ResponseEntity.status(ex.getStatusCode())
-                .body(Map.of("message", message));
+    public ProblemDetail handleResponseStatus(ResponseStatusException ex, HttpServletRequest request) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+        String detail = ex.getReason() != null ? ex.getReason() : "Request failed";
+        return problem(status, "request-failed", status.getReasonPhrase(), detail, request);
     }
 
-    // Catch-all for anything unexpected. Logs the real cause (with stack trace)
-    // and returns a safe, generic 500 — never leak internals to the client.
+    // Catch-all. Logs the real cause (stack trace) and returns a safe, generic 500
+    // — never leak internals to the client.
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<?> handleUnexpected(Exception ex) {
+    public ProblemDetail handleUnexpected(Exception ex, HttpServletRequest request) {
         log.error("Unhandled error", ex);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("message", "Something went wrong"));
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal-error", "Internal server error",
+                "Something went wrong", request);
     }
 }

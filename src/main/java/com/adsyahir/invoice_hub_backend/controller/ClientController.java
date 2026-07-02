@@ -3,8 +3,6 @@ package com.adsyahir.invoice_hub_backend.controller;
 import com.adsyahir.invoice_hub_backend.dao.ClientRepo;
 import com.adsyahir.invoice_hub_backend.dto.request.CreateClientRequest;
 import com.adsyahir.invoice_hub_backend.dto.request.UpdateClientRequest;
-import com.adsyahir.invoice_hub_backend.dto.request.UpdateClientRequest;
-import com.adsyahir.invoice_hub_backend.dto.response.ApiResponse;
 import com.adsyahir.invoice_hub_backend.dto.response.ClientResponse;
 import com.adsyahir.invoice_hub_backend.model.Client;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
@@ -39,10 +37,10 @@ public class ClientController {
     {
         Client client = clientService.createClient(request, principal.getUser());
 
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(Map.of(
+        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
                 "id", client.getId(),
                 "name", client.getName()
-        )));
+        ));
     }
 
     @PutMapping("/{uuid}")
@@ -50,7 +48,7 @@ public class ClientController {
 
         ClientResponse updated = clientService.updateClient(uuid, request, principal.getUser());
 
-        return ResponseEntity.ok(ApiResponse.success(updated));
+        return ResponseEntity.ok(updated);
     }
 
     @GetMapping
@@ -59,7 +57,7 @@ public class ClientController {
     {
 //        List <Client> client = clientService.findAllClients(principal.getUser());
 //        System.out.println(client);
-        return ResponseEntity.ok(ApiResponse.success(clientService.findAllClients(principal.getUser())));
+        return ResponseEntity.ok(clientService.findAllClients(principal.getUser()));
 
 //        return ResponseEntity.ok().body(ApiResponse.success(Map.of(
 //                "id", "test",
@@ -70,14 +68,13 @@ public class ClientController {
     @GetMapping("/{uuid}")
     @PreAuthorize("hasAuthority('client:read')")
     public ResponseEntity<?> getClient(@PathVariable UUID uuid, @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(ApiResponse.success(clientService.findClientByUuid(uuid, principal.getUser())));
+        return ResponseEntity.ok(clientService.findClientByUuid(uuid, principal.getUser()));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('client:delete')")
     public ResponseEntity<?> deleteClient(@PathVariable Long id, @AuthenticationPrincipal UserPrincipal principal) {
-        System.out.println("Delete client with id: " + id);
-    clientService.deleteClient(id, principal.getUser());
-        return ResponseEntity.ok(ApiResponse.success("Client deleted successfully"));
+        clientService.deleteClient(id, principal.getUser());
+        return ResponseEntity.noContent().build();
     }
 }
