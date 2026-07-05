@@ -4,6 +4,7 @@ import com.adsyahir.invoice_hub_backend.dao.ClientRepo;
 import com.adsyahir.invoice_hub_backend.dao.InvoiceRepo;
 import com.adsyahir.invoice_hub_backend.dto.request.CreateInvoiceRequest;
 import com.adsyahir.invoice_hub_backend.dto.LineItemRequest;
+import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import com.adsyahir.invoice_hub_backend.exception.ValidationException;
 import com.adsyahir.invoice_hub_backend.model.Client;
@@ -18,6 +19,7 @@ import com.adsyahir.invoice_hub_backend.dto.response.InvoiceResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.List;
@@ -147,6 +149,52 @@ public class InvoiceService {
         return toResponse(invoice);
     }
 
+    // LHDN MyInvois validated-invoice portal. Real submissions call the MyInvois
+    // API; the public share URL (encoded into the QR) is built off this host.
+    private static final String MYINVOIS_PORTAL = "https://myinvois.hasil.gov.my";
+
+    /**
+     * Submit an invoice to LHDN MyInvois.
+     *
+     * TODO(integration): this simulates the round-trip. A real implementation
+     * builds the UBL 2.1 document, POSTs it to the MyInvois API, and the invoice
+     * goes PENDING first; a poll/webhook later flips it to VALIDATED (with the
+     * LHDN UUID + long id) or REJECTED. Here we validate synchronously so the UI
+     * can be exercised end-to-end.
+     */
+    @Transactional
+    public InvoiceResponse submitEInvoice(UUID uuid, User currentUser) {
+        if (currentUser.getTenant() == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found");
+        }
+        // Tenant-scoped lookup (IDOR guard): another tenant's invoice isn't found.
+        Invoice invoice = invoiceRepo.findByUuidAndTenantId(uuid, currentUser.getTenant().getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
+
+        if (invoice.getStatus() == InvoiceStatus.VOID) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A void invoice can't be submitted to MyInvois");
+        }
+        EInvoiceStatus current = invoice.getEinvoiceStatus();
+        if (current == EInvoiceStatus.PENDING || current == EInvoiceStatus.VALIDATED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This invoice has already been submitted to MyInvois");
+        }
+
+        // --- simulate a successful LHDN validation ---
+        LocalDateTime now = LocalDateTime.now();
+        String lhdnUuid = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String longId = lhdnUuid + invoice.getInvoiceNumber().replaceAll("\\D", "");
+
+        invoice.setEinvoiceStatus(EInvoiceStatus.VALIDATED);
+        invoice.setMyinvoisUuid(lhdnUuid);
+        invoice.setMyinvoisLongId(longId);
+        invoice.setEinvoiceValidationUrl(MYINVOIS_PORTAL + "/" + lhdnUuid + "/share/" + longId);
+        invoice.setEinvoiceSubmittedAt(now);
+        invoice.setEinvoiceValidatedAt(now);
+        invoice.setEinvoiceRejectionReason(null); // clear any previous rejection on resubmit
+
+        return toResponse(invoiceRepo.save(invoice));
+    }
+
     /** Map an Invoice entity to the flat API DTO (no tenant / proxy leakage). */
     private InvoiceResponse toResponse(Invoice inv) {
         return InvoiceResponse.builder()
@@ -171,6 +219,14 @@ public class InvoiceService {
                 .paymentLinkExpiresAt(inv.getPaymentLinkExpiresAt())
                 .sentAt(inv.getSentAt())
                 .paidAt(inv.getPaidAt())
+                .einvoiceStatus(inv.getEinvoiceStatus())
+                .einvoiceType(inv.getEinvoiceType())
+                .myinvoisUuid(inv.getMyinvoisUuid())
+                .myinvoisLongId(inv.getMyinvoisLongId())
+                .einvoiceValidationUrl(inv.getEinvoiceValidationUrl())
+                .einvoiceSubmittedAt(inv.getEinvoiceSubmittedAt())
+                .einvoiceValidatedAt(inv.getEinvoiceValidatedAt())
+                .einvoiceRejectionReason(inv.getEinvoiceRejectionReason())
                 .createdAt(inv.getCreatedAt())
                 .updatedAt(inv.getUpdatedAt())
                 .lineItems(inv.getLineItems().stream()

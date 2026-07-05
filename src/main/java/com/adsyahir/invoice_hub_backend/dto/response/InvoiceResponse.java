@@ -1,5 +1,6 @@
 package com.adsyahir.invoice_hub_backend.dto.response;
 
+import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import lombok.Builder;
 import lombok.Getter;
@@ -47,6 +48,16 @@ public class InvoiceResponse {
     private LocalDateTime paymentLinkExpiresAt;
     private LocalDateTime sentAt;
     private LocalDateTime paidAt;
+
+    // --- LHDN MyInvois e-invoice (Malaysia) ---
+    private EInvoiceStatus einvoiceStatus;   // serialized as its name, e.g. "VALIDATED"
+    private String einvoiceType;             // LHDN doc type code
+    private String myinvoisUuid;
+    private String myinvoisLongId;
+    private String einvoiceValidationUrl;
+    private LocalDateTime einvoiceSubmittedAt;
+    private LocalDateTime einvoiceValidatedAt;
+    private String einvoiceRejectionReason;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

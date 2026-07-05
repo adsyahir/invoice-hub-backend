@@ -1,6 +1,10 @@
 HELP.md
 target/
 .mvn/wrapper/maven-wrapper.jar
+
+### Secrets — Docker Compose env file (never commit; see .env.example) ###
+.env
+!.env.example
 !**/src/main/**/target/
 !**/src/test/**/target/
 

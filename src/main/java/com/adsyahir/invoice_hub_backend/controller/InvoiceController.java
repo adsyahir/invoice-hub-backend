@@ -59,4 +59,13 @@ public class InvoiceController {
                                   @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(invoiceService.show(id, principal.getUser()));
     }
+
+    /** Submit the invoice to LHDN MyInvois; returns the updated invoice. */
+    @PostMapping("/{id}/einvoice/submit")
+    @PreAuthorize("hasAuthority('invoice:write')")
+    public ResponseEntity<?> submitEInvoice(@PathVariable UUID id,
+                                            @AuthenticationPrincipal UserPrincipal principal) {
+        log.info("Submitting invoice {} to MyInvois for user {}", id, principal.getUser().getEmail());
+        return ResponseEntity.ok(invoiceService.submitEInvoice(id, principal.getUser()));
+    }
 }

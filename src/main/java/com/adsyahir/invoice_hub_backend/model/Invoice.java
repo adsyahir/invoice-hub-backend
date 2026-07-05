@@ -1,5 +1,6 @@
 package com.adsyahir.invoice_hub_backend.model;
 
+import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -101,6 +102,38 @@ public class Invoice {
 
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
+
+    // --- LHDN MyInvois e-invoice (Malaysia) ---
+    // Lifecycle is independent of `status`: a PAID invoice can still be
+    // NOT_SUBMITTED to LHDN. @Builder.Default keeps the initializer when using
+    // the builder (otherwise this would be null on Invoice.builder()...build()).
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "einvoice_status", nullable = false, length = 20)
+    private EInvoiceStatus einvoiceStatus = EInvoiceStatus.NOT_SUBMITTED;
+
+    // LHDN document type code: "01" Invoice, "02" Credit Note, "03" Debit Note.
+    @Builder.Default
+    @Column(name = "einvoice_type", nullable = false, length = 2)
+    private String einvoiceType = "01";
+
+    @Column(name = "myinvois_uuid", length = 64)
+    private String myinvoisUuid;
+
+    @Column(name = "myinvois_long_id", length = 128)
+    private String myinvoisLongId;
+
+    @Column(name = "einvoice_validation_url", columnDefinition = "TEXT")
+    private String einvoiceValidationUrl;
+
+    @Column(name = "einvoice_submitted_at")
+    private LocalDateTime einvoiceSubmittedAt;
+
+    @Column(name = "einvoice_validated_at")
+    private LocalDateTime einvoiceValidatedAt;
+
+    @Column(name = "einvoice_rejection_reason", columnDefinition = "TEXT")
+    private String einvoiceRejectionReason;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

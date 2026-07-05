@@ -1,5 +1,25 @@
 services:
 
+  db:
+    image: postgres:17
+    container_name: invoicehub-db
+    environment:
+      POSTGRES_DB: invoice-hub
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Required — compose aborts if unset. Applied only on FIRST volume init;
+      # changing it later needs `docker compose down -v` to take effect.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — see .env.example}
+    ports:
+      - "5433:5432"
+    volumes:
+      - invoicehub-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d invoice-hub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   mailpit:
     image: axllent/mailpit
     container_name: invoicehub-mailpit
@@ -7,3 +27,35 @@ services:
       - "1026:1025" # SMTP port, Spring Boot connects here
       - "8026:8025" # Web UI, you view emails here
     restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: invoice-hub-backend:latest
+    container_name: invoicehub-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      # Spring relaxed-binding maps these env vars onto the properties in
+      # application.properties, so containers talk over the compose network
+      # instead of localhost.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/invoice-hub
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — see .env.example}
+      SPRING_MAIL_HOST: mailpit
+      SPRING_MAIL_PORT: "1025"
+      # JWT_SECRET is REQUIRED — compose aborts with this message if it is unset
+      # or empty (set it in .env; see .env.example). No committed dev fallback,
+      # so a missing secret fails loudly instead of silently using a known key.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env — see .env.example (openssl rand -hex 32)}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
+
+volumes:
+  invoicehub-db-data:

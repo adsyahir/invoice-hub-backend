@@ -63,9 +63,29 @@
 			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>
 
+		<!-- Reads a .env file into the Spring Environment so `${VAR}` placeholders
+		     in application.properties resolve from .env when running WITHOUT Docker
+		     (e.g. ./mvnw spring-boot:run). The same .env is used by docker compose
+		     for its own ${VAR} interpolation, so one file feeds both. OS/compose
+		     env vars take precedence, and a missing .env is ignored. -->
+		<dependency>
+			<groupId>me.paulschwarz</groupId>
+			<artifactId>spring-dotenv</artifactId>
+			<version>4.0.0</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-docker-compose</artifactId>
+			<scope>runtime</scope>
+			<optional>true</optional>
+		</dependency>
+		<!-- Dev-only: auto-restart on recompile during `./mvnw spring-boot:run`.
+		     `optional`/`runtime` scope + Boot's own detection disable it in the
+		     packaged jar, so it has no effect inside the Docker image. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-devtools</artifactId>
 			<scope>runtime</scope>
 			<optional>true</optional>
 		</dependency>

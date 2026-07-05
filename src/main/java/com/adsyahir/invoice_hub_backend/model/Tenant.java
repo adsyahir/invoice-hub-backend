@@ -39,7 +39,7 @@ public class Tenant {
     private String billingEmail;
 
     @Column(name = "default_currency", nullable = false)
-    private String defaultCurrency;
+    private String defaultCurrency = "MYR";
 
     @Column(name = "tax_id", nullable = true)
     private String taxId;
