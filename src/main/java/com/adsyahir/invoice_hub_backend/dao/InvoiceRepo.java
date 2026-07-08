@@ -38,6 +38,10 @@ public interface InvoiceRepo extends JpaRepository<Invoice, Long> {
     // Public pay flow: resolve a live invoice by its unguessable payment-link token.
     Optional<Invoice> findByPaymentLinkToken(String paymentLinkToken);
 
+    // Super-admin usage stat: live invoices a tenant created since the given instant
+    // (start of the current month). @SQLRestriction excludes soft-deleted rows.
+    long countByTenantIdAndCreatedAtAfter(Long tenantId, java.time.LocalDateTime start);
+
     // Overdue sweep (used by the @Scheduled job): unpaid invoices whose due date
     // has passed. @SQLRestriction already excludes soft-deleted rows.
     List<Invoice> findByStatusInAndDueDateBefore(Collection<InvoiceStatus> statuses, LocalDate date);

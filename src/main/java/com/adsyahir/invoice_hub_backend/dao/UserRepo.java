@@ -15,6 +15,7 @@ public interface UserRepo extends JpaRepository<User, Long> {
     User findByEmail(String email);
     boolean existsByEmail(String email);
     List<User> findAllByTenantIdAndDeletedAtIsNull(Long tenantId);
+    long countByTenantIdAndDeletedAtIsNull(Long tenantId);
 
     // Tenant-scoped lookup by public handle, ignoring already-removed members.
     Optional<User> findByUuidAndTenantIdAndDeletedAtIsNull(UUID uuid, Long tenantId);
