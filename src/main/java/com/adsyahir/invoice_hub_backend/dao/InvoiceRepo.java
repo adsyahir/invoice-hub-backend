@@ -1,5 +1,6 @@
 package com.adsyahir.invoice_hub_backend.dao;
 
+import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import com.adsyahir.invoice_hub_backend.model.Invoice;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -7,6 +8,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,5 +34,12 @@ public interface InvoiceRepo extends JpaRepository<Invoice, Long> {
     // Tenant-scoped single lookup by the PUBLIC uuid: the tenant id is part of
     // the WHERE clause, so an invoice owned by another tenant simply isn't found.
     Optional<Invoice> findByUuidAndTenantId(UUID uuid, Long tenantId);
+
+    // Public pay flow: resolve a live invoice by its unguessable payment-link token.
+    Optional<Invoice> findByPaymentLinkToken(String paymentLinkToken);
+
+    // Overdue sweep (used by the @Scheduled job): unpaid invoices whose due date
+    // has passed. @SQLRestriction already excludes soft-deleted rows.
+    List<Invoice> findByStatusInAndDueDateBefore(Collection<InvoiceStatus> statuses, LocalDate date);
 
 }

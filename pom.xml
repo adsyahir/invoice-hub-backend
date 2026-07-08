@@ -19,6 +19,7 @@
 	</licenses>
 	<developers>
 		<developer/>
+
 	</developers>
 	<scm>
 		<connection/>
@@ -28,8 +29,30 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<!-- Spring AI 2.0.x is the line that targets Spring Boot 4. -->
+		<spring-ai.version>2.0.0</spring-ai.version>
 	</properties>
+
+	<!-- Spring AI BOM: supplies the version for spring-ai-starter-* deps so they
+	     don't each need an explicit <version> (the Spring Boot parent doesn't
+	     manage Spring AI). -->
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.ai</groupId>
+				<artifactId>spring-ai-bom</artifactId>
+				<version>${spring-ai.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
 	<dependencies>
+			<dependency>
+				<groupId>org.springframework.ai</groupId>
+				<artifactId>spring-ai-starter-model-openai</artifactId>
+			</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-thymeleaf</artifactId>
@@ -63,16 +86,14 @@
 			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>
 
-		<!-- Reads a .env file into the Spring Environment so `${VAR}` placeholders
-		     in application.properties resolve from .env when running WITHOUT Docker
-		     (e.g. ./mvnw spring-boot:run). The same .env is used by docker compose
-		     for its own ${VAR} interpolation, so one file feeds both. OS/compose
-		     env vars take precedence, and a missing .env is ignored. -->
+		<!-- HTML->PDF for invoice PDF generation. Renders a Thymeleaf-produced
+		     XHTML invoice to a PDF via PDFBox. -->
 		<dependency>
-			<groupId>me.paulschwarz</groupId>
-			<artifactId>spring-dotenv</artifactId>
-			<version>4.0.0</version>
+			<groupId>com.openhtmltopdf</groupId>
+			<artifactId>openhtmltopdf-pdfbox</artifactId>
+			<version>1.0.10</version>
 		</dependency>
+
 
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

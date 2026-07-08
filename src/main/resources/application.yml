@@ -1,0 +1,91 @@
+spring:
+  # Load .env natively (Spring Boot 4) so ${VAR} placeholders resolve from it on a
+  # local run — no third-party lib. `optional:` = don't fail if the file is absent
+  # (e.g. in Docker, where compose passes the vars as real env vars instead).
+  # `[.properties]` tells Boot to parse the extensionless .env as key=value pairs.
+  # NOTE: the file is resolved relative to the process WORKING DIRECTORY, which
+  # must be the invoice-hub-backend module root (where .env lives).
+  config:
+    import: optional:file:.env[.properties]
+
+  application:
+    name: invoice-hub-backend
+
+  # DB credentials resolve from .env (via spring-dotenv) when running locally, or
+  # from real env vars when running under Docker. The values after ':' are dev
+  # fallbacks used only if neither supplies them.
+  datasource:
+    url: jdbc:postgresql://localhost:5432/invoice-hub
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+
+  # Spring Boot's own docker-compose support is disabled; we manage compose manually.
+  docker:
+    compose:
+      enabled: false
+
+  security:
+    user:
+      name: adam
+      password: 1234
+
+  mail:
+    host: localhost
+    # Mailpit SMTP — host port 1026 (mapped to the container's 1025 in
+    # docker-compose.yml, offset to avoid clashing with the other mailpit on
+    # 1025). Web UI: http://localhost:8026
+    port: 1026
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
+  # Spring AI — OpenRouter (OpenAI-compatible gateway). Spring AI 2.0's OpenAI
+  # integration uses the official openai-java SDK, which appends only
+  # "/chat/completions" — so base-url MUST include "/v1". Final endpoint:
+  # https://openrouter.ai/api/v1/chat/completions. Model must support tool-calling;
+  # free `:free` models work but can be rate-limited (HTTP 429).
+  ai:
+    openai:
+      base-url: https://openrouter.ai/api/v1
+      api-key: ${OPENROUTER_API_KEY}
+      chat:
+        options:
+          model: "${OPENROUTER_MODEL:openai/gpt-oss-20b:free}"
+          temperature: 0.3
+
+server:
+  port: 8100
+  servlet:
+    context-path: /api
+    session:
+      cookie:
+        same-site: strict
+
+app:
+  # CORS: comma-separated list of allowed browser origins (Vite dev server).
+  cors:
+    allowed-origins: http://localhost:5173
+
+  # Public URL of the frontend. Used to build links emailed to users (e.g. invite
+  # accept). Override via APP_BASE_URL in production (e.g. https://app.invoicehub.com).
+  base-url: ${APP_BASE_URL:http://localhost:5173}
+
+  # Refresh-cookie "Secure" flag. MUST be false for local http://localhost dev
+  # (a Secure cookie is dropped over plain http). Set true in production (HTTPS).
+  cookie:
+    secure: false
+
+# JWT — STABLE signing key (do NOT regenerate per restart, or all tokens break).
+# Reads the JWT_SECRET env var in production; falls back to a dev key locally.
+jwt:
+  secret: ${JWT_SECRET:2bda0e8dfe4c0b5b0a4e11ece648c0370d5921368eae7f80f0a7a1eb71441b8b}
+  access-token-minutes: 30

@@ -53,6 +53,8 @@ services:
       # so a missing secret fails loudly instead of silently using a known key.
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env — see .env.example (openssl rand -hex 32)}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+      # OpenRouter API key for Spring AI — REQUIRED (app fails at startup if unset).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env — see .env.example}
     ports:
       - "8100:8100"
     restart: unless-stopped

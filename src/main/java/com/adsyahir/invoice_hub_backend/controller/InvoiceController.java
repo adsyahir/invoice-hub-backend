@@ -8,7 +8,9 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -58,6 +60,52 @@ public class InvoiceController {
     public ResponseEntity<?> show(@PathVariable UUID id,
                                   @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(invoiceService.show(id, principal.getUser()));
+    }
+
+    /** Send the invoice to its client (email + pay link); DRAFT -> SENT. */
+    @PostMapping("/{id}/send")
+    @PreAuthorize("hasAuthority('invoice:write')")
+    public ResponseEntity<?> send(@PathVariable UUID id,
+                                  @AuthenticationPrincipal UserPrincipal principal) {
+        log.info("Sending invoice {} for user {}", id, principal.getUser().getEmail());
+        return ResponseEntity.ok(invoiceService.send(id, principal.getUser()));
+    }
+
+    /** Void / cancel the invoice. */
+    @PostMapping("/{id}/void")
+    @PreAuthorize("hasAuthority('invoice:void')")
+    public ResponseEntity<?> voidInvoice(@PathVariable UUID id,
+                                         @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(invoiceService.voidInvoice(id, principal.getUser()));
+    }
+
+    /** Duplicate the invoice as a fresh DRAFT; returns the new invoice. */
+    @PostMapping("/{id}/duplicate")
+    @PreAuthorize("hasAuthority('invoice:write')")
+    public ResponseEntity<?> duplicate(@PathVariable UUID id,
+                                       @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(invoiceService.duplicate(id, principal.getUser()));
+    }
+
+    /** Download the invoice as a PDF. */
+    @GetMapping("/{id}/pdf")
+    @PreAuthorize("hasAuthority('invoice:read')")
+    public ResponseEntity<byte[]> pdf(@PathVariable UUID id,
+                                      @AuthenticationPrincipal UserPrincipal principal) {
+        byte[] pdf = invoiceService.pdf(id, principal.getUser());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"invoice-" + id + ".pdf\"")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
+    }
+
+    /** Audit trail for the invoice (newest first). */
+    @GetMapping("/{id}/audit-log")
+    @PreAuthorize("hasAuthority('invoice:read')")
+    public ResponseEntity<?> auditLog(@PathVariable UUID id,
+                                      @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(invoiceService.auditTrail(id, principal.getUser()));
     }
 
     /** Submit the invoice to LHDN MyInvois; returns the updated invoice. */

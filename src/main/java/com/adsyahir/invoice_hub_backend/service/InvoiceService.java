@@ -7,11 +7,19 @@ import com.adsyahir.invoice_hub_backend.dto.LineItemRequest;
 import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import com.adsyahir.invoice_hub_backend.exception.ValidationException;
+import com.adsyahir.invoice_hub_backend.dto.response.AuditLogResponse;
+import com.adsyahir.invoice_hub_backend.dto.response.PublicInvoiceResponse;
 import com.adsyahir.invoice_hub_backend.model.Client;
 import com.adsyahir.invoice_hub_backend.model.Invoice;
 import com.adsyahir.invoice_hub_backend.model.InvoiceLineItem;
 import com.adsyahir.invoice_hub_backend.model.User;
+import jakarta.mail.internet.MimeMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -19,21 +27,42 @@ import com.adsyahir.invoice_hub_backend.dto.response.InvoiceResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.List;
 import java.util.UUID;
 
 @Service
 public class InvoiceService {
 
+    private static final Logger log = LoggerFactory.getLogger(InvoiceService.class);
+
     private final InvoiceRepo invoiceRepo;
     private final ClientRepo clientRepo;
+    private final AuditService auditService;
+    private final InvoicePdfService pdfService;
+    private final JavaMailSender mailSender;
+    private final NotificationService notificationService;
 
-    public InvoiceService(InvoiceRepo invoiceRepo, ClientRepo clientRepo) {
+    @Value("${app.base-url:http://localhost:5173}")
+    private String appBaseUrl;
+
+    public InvoiceService(InvoiceRepo invoiceRepo, ClientRepo clientRepo,
+                          AuditService auditService, InvoicePdfService pdfService,
+                          JavaMailSender mailSender, NotificationService notificationService) {
         this.invoiceRepo = invoiceRepo;
         this.clientRepo = clientRepo;
+        this.auditService = auditService;
+        this.pdfService = pdfService;
+        this.mailSender = mailSender;
+        this.notificationService = notificationService;
+    }
+
+    private static String invoiceLink(Invoice invoice) {
+        return "/invoices/" + invoice.getUuid();
     }
 
     /**
@@ -122,7 +151,10 @@ public class InvoiceService {
         invoice.setAmountDue(total.subtract(amountPaid));
 
 
-        return invoiceRepo.save(invoice); // cascades line items
+        Invoice saved = invoiceRepo.save(invoice); // cascades line items
+        auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "CREATED", currentUser,
+                "Created invoice " + saved.getInvoiceNumber() + " for " + total);
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -192,7 +224,287 @@ public class InvoiceService {
         invoice.setEinvoiceValidatedAt(now);
         invoice.setEinvoiceRejectionReason(null); // clear any previous rejection on resubmit
 
-        return toResponse(invoiceRepo.save(invoice));
+        Invoice saved = invoiceRepo.save(invoice);
+        auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "EINVOICE_SUBMITTED", currentUser,
+                "Submitted " + saved.getInvoiceNumber() + " to MyInvois (validated)");
+        notificationService.notify(saved.getTenant(), "EINVOICE_VALIDATED",
+                "E-invoice validated: " + saved.getInvoiceNumber(),
+                saved.getInvoiceNumber() + " was validated by LHDN MyInvois.",
+                invoiceLink(saved));
+        return toResponse(saved);
+    }
+
+    // --- lifecycle: send / void / duplicate / overdue ----------------------
+
+    /**
+     * Send an invoice to its client (US-012). Ensures a payment-link token,
+     * flips DRAFT -> SENT (re-send keeps the current status), stamps sentAt, and
+     * emails the client a PDF + pay link. Already-settled or void invoices are
+     * rejected. Email delivery is best-effort — the state transition still
+     * commits if the mail server is unreachable (dev/Mailpit).
+     */
+    @Transactional
+    public InvoiceResponse send(UUID uuid, User currentUser) {
+        Invoice invoice = requireInvoice(uuid, currentUser);
+
+        if (invoice.getStatus() == InvoiceStatus.VOID) {
+            throw conflict("A void invoice can't be sent");
+        }
+        if (invoice.getStatus() == InvoiceStatus.PAID || invoice.getStatus() == InvoiceStatus.REFUNDED) {
+            throw conflict("This invoice is already settled");
+        }
+
+        if (invoice.getPaymentLinkToken() == null) {
+            invoice.setPaymentLinkToken(newToken());
+            invoice.setPaymentLinkExpiresAt(LocalDateTime.now().plusDays(30));
+        }
+        if (invoice.getStatus() == InvoiceStatus.DRAFT) {
+            invoice.setStatus(InvoiceStatus.SENT);
+        }
+        if (invoice.getSentAt() == null) {
+            invoice.setSentAt(LocalDateTime.now());
+        }
+
+        Invoice saved = invoiceRepo.save(invoice);
+        emailInvoice(saved);   // best-effort
+        auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "SENT", currentUser,
+                "Sent " + saved.getInvoiceNumber() + " to " + clientEmail(saved));
+        notificationService.notify(saved.getTenant(), "INVOICE_SENT",
+                "Invoice sent: " + saved.getInvoiceNumber(),
+                saved.getInvoiceNumber() + " was sent to " + clientEmail(saved) + ".",
+                invoiceLink(saved));
+        return toResponse(saved);
+    }
+
+    /** Void an invoice (US-014). A settled invoice can't be voided; refund it instead. */
+    @Transactional
+    public InvoiceResponse voidInvoice(UUID uuid, User currentUser) {
+        Invoice invoice = requireInvoice(uuid, currentUser);
+
+        if (invoice.getStatus() == InvoiceStatus.PAID || invoice.getStatus() == InvoiceStatus.REFUNDED) {
+            throw conflict("A settled invoice can't be voided — refund it instead");
+        }
+        if (invoice.getStatus() == InvoiceStatus.VOID) {
+            throw conflict("Invoice is already void");
+        }
+
+        invoice.setStatus(InvoiceStatus.VOID);
+        Invoice saved = invoiceRepo.save(invoice);
+        auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "VOIDED", currentUser,
+                "Voided " + saved.getInvoiceNumber());
+        return toResponse(saved);
+    }
+
+    /**
+     * Duplicate an invoice as a fresh DRAFT (US-016). Copies the client, currency,
+     * notes and line items; resets status, payments, tokens, e-invoice fields and
+     * dates. The new invoice number is the source number suffixed with -COPY
+     * (deduped if that already exists).
+     */
+    @Transactional
+    public InvoiceResponse duplicate(UUID uuid, User currentUser) {
+        Invoice src = requireInvoice(uuid, currentUser);
+
+        LocalDate issue = LocalDate.now();
+        long termDays = ChronoUnit.DAYS.between(src.getIssueDate(), src.getDueDate());
+        LocalDate due = issue.plusDays(Math.max(0, termDays));
+
+        Invoice copy = Invoice.builder()
+                .tenant(src.getTenant())
+                .client(src.getClient())
+                .createdBy(currentUser)
+                .invoiceNumber(nextCopyNumber(src.getInvoiceNumber()))
+                .status(InvoiceStatus.DRAFT)
+                .currency(src.getCurrency())
+                .subtotal(src.getSubtotal())
+                .taxAmount(src.getTaxAmount())
+                .discountAmount(src.getDiscountAmount())
+                .totalAmount(src.getTotalAmount())
+                .amountPaid(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP))
+                .amountDue(src.getTotalAmount())
+                .issueDate(issue)
+                .dueDate(due)
+                .notes(src.getNotes())
+                .internalNotes(src.getInternalNotes())
+                .build();
+
+        for (InvoiceLineItem li : src.getLineItems()) {
+            InvoiceLineItem item = new InvoiceLineItem();
+            item.setDescription(li.getDescription());
+            item.setQuantity(li.getQuantity());
+            item.setUnitPrice(li.getUnitPrice());
+            item.setTaxRate(li.getTaxRate());
+            item.setTaxAmount(li.getTaxAmount());
+            item.setLineTotal(li.getLineTotal());
+            item.setSortOrder(li.getSortOrder());
+            copy.addLineItem(item);
+        }
+
+        Invoice saved = invoiceRepo.save(copy);
+        auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "DUPLICATED", currentUser,
+                "Duplicated " + src.getInvoiceNumber() + " -> " + saved.getInvoiceNumber());
+        return toResponse(saved);
+    }
+
+    /**
+     * System sweep (called by the scheduled job): flip unpaid SENT / PARTIALLY_PAID
+     * invoices whose due date has passed to OVERDUE. Runs across all tenants.
+     * Returns how many were updated.
+     */
+    @Transactional
+    public int markOverdueInvoices() {
+        List<Invoice> due = invoiceRepo.findByStatusInAndDueDateBefore(
+                List.of(InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID), LocalDate.now());
+        int count = 0;
+        for (Invoice inv : due) {
+            if (nz(inv.getAmountDue()).signum() > 0) {
+                inv.setStatus(InvoiceStatus.OVERDUE);
+                invoiceRepo.save(inv);
+                auditService.record(inv.getTenant(), "INVOICE", inv.getId(), "OVERDUE", null,
+                        "Marked overdue (due " + inv.getDueDate() + ")");
+                notificationService.notify(inv.getTenant(), "INVOICE_OVERDUE",
+                        "Invoice overdue: " + inv.getInvoiceNumber(),
+                        inv.getInvoiceNumber() + " is past due (" + inv.getDueDate() + ") with "
+                                + inv.getCurrency() + " " + nz(inv.getAmountDue()) + " outstanding.",
+                        invoiceLink(inv));
+                count++;
+            }
+        }
+        if (count > 0) {
+            log.info("Overdue sweep: marked {} invoice(s) OVERDUE", count);
+        }
+        return count;
+    }
+
+    /** Render the invoice to a PDF (tenant-scoped). */
+    @Transactional(readOnly = true)
+    public byte[] pdf(UUID uuid, User currentUser) {
+        Invoice invoice = requireInvoice(uuid, currentUser);
+        // Touch line items so they're loaded before the template renders (LAZY).
+        invoice.getLineItems().size();
+        return pdfService.render(invoice);
+    }
+
+    /** Audit trail for one invoice (tenant-scoped), newest first. */
+    @Transactional(readOnly = true)
+    public List<AuditLogResponse> auditTrail(UUID uuid, User currentUser) {
+        Invoice invoice = requireInvoice(uuid, currentUser);
+        return auditService.forEntity("INVOICE", invoice.getId());
+    }
+
+    /**
+     * Public, unauthenticated invoice view resolved by its payment-link token
+     * (US-020). 404 if the token is unknown, 410 if the link has expired.
+     */
+    @Transactional(readOnly = true)
+    public PublicInvoiceResponse publicView(String token) {
+        Invoice invoice = invoiceRepo.findByPaymentLinkToken(token)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
+        if (invoice.getPaymentLinkExpiresAt() != null
+                && invoice.getPaymentLinkExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new ResponseStatusException(HttpStatus.GONE, "This payment link has expired");
+        }
+        boolean payable = invoice.getStatus() != InvoiceStatus.VOID
+                && invoice.getStatus() != InvoiceStatus.PAID
+                && nz(invoice.getAmountDue()).signum() > 0;
+
+        List<PublicInvoiceResponse.Line> lines = invoice.getLineItems().stream()
+                .map(li -> PublicInvoiceResponse.Line.builder()
+                        .description(li.getDescription())
+                        .quantity(li.getQuantity())
+                        .unitPrice(li.getUnitPrice())
+                        .lineTotal(li.getLineTotal())
+                        .build())
+                .toList();
+
+        return PublicInvoiceResponse.builder()
+                .invoiceNumber(invoice.getInvoiceNumber())
+                .organizationName(invoice.getTenant() != null ? invoice.getTenant().getName() : null)
+                .clientName(invoice.getClient() != null ? invoice.getClient().getName() : null)
+                .currency(invoice.getCurrency())
+                .totalAmount(invoice.getTotalAmount())
+                .amountPaid(invoice.getAmountPaid())
+                .amountDue(invoice.getAmountDue())
+                .issueDate(invoice.getIssueDate())
+                .dueDate(invoice.getDueDate())
+                .status(invoice.getStatus())
+                .payable(payable)
+                .lineItems(lines)
+                .build();
+    }
+
+    // --- helpers -----------------------------------------------------------
+
+    private Invoice requireInvoice(UUID uuid, User user) {
+        if (user.getTenant() == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found");
+        }
+        return invoiceRepo.findByUuidAndTenantId(uuid, user.getTenant().getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
+    }
+
+    private static ResponseStatusException conflict(String message) {
+        return new ResponseStatusException(HttpStatus.CONFLICT, message);
+    }
+
+    /** Unguessable token for the public payment link. */
+    private static String newToken() {
+        return (UUID.randomUUID().toString() + UUID.randomUUID().toString()).replace("-", "");
+    }
+
+    private String nextCopyNumber(String original) {
+        String base = original + "-COPY";
+        String candidate = base;
+        int n = 2;
+        while (invoiceRepo.existsByInvoiceNumber(candidate)) {
+            candidate = base + "-" + n++;
+        }
+        return candidate;
+    }
+
+    private static String clientEmail(Invoice inv) {
+        return inv.getClient() != null && inv.getClient().getEmail() != null
+                ? inv.getClient().getEmail() : "(no email)";
+    }
+
+    private static BigDecimal nz(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
+    }
+
+    /** Best-effort: email the client the invoice PDF and a pay link. Never throws. */
+    private void emailInvoice(Invoice invoice) {
+        String to = invoice.getClient() != null ? invoice.getClient().getEmail() : null;
+        if (to == null || to.isBlank()) {
+            log.info("Invoice {} sent but client has no email — skipping delivery", invoice.getInvoiceNumber());
+            return;
+        }
+        try {
+            byte[] pdf = pdfService.render(invoice);
+            String payLink = appBaseUrl + "/pay/" + invoice.getPaymentLinkToken();
+            String org = invoice.getTenant() != null ? invoice.getTenant().getName() : "InvoiceHub";
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom("no-reply@invoicehub.local");
+            helper.setTo(to);
+            helper.setSubject("Invoice " + invoice.getInvoiceNumber() + " from " + org);
+            helper.setText("""
+                    <p>Hello,</p>
+                    <p>Please find attached invoice <strong>%s</strong> for <strong>%s %s</strong>,
+                    due %s.</p>
+                    <p>You can view and pay online here:<br/>
+                    <a href="%s">%s</a></p>
+                    <p>Thank you,<br/>%s</p>
+                    """.formatted(
+                    invoice.getInvoiceNumber(), invoice.getCurrency(), nz(invoice.getAmountDue()),
+                    invoice.getDueDate(), payLink, payLink, org), true);
+            helper.addAttachment(invoice.getInvoiceNumber() + ".pdf",
+                    new org.springframework.core.io.ByteArrayResource(pdf), "application/pdf");
+            mailSender.send(message);
+            log.info("Emailed invoice {} to {}", invoice.getInvoiceNumber(), to);
+        } catch (Exception e) {
+            log.warn("Failed to email invoice {} to {}: {}", invoice.getInvoiceNumber(), to, e.getMessage());
+        }
     }
 
     /** Map an Invoice entity to the flat API DTO (no tenant / proxy leakage). */

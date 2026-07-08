@@ -2,7 +2,10 @@ package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.dto.LoginRequest;
 import com.adsyahir.invoice_hub_backend.dto.RegisterRequest;
+import com.adsyahir.invoice_hub_backend.dto.request.ForgotPasswordRequest;
+import com.adsyahir.invoice_hub_backend.dto.request.ResetPasswordRequest;
 import com.adsyahir.invoice_hub_backend.dto.response.AuthResult;
+import com.adsyahir.invoice_hub_backend.service.PasswordResetService;
 import com.adsyahir.invoice_hub_backend.model.User;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.CookieService;
@@ -49,6 +52,9 @@ public class UserController {
 
     @Autowired
     private CookieService cookieService;
+
+    @Autowired
+    private PasswordResetService passwordResetService;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request,
@@ -119,6 +125,24 @@ public class UserController {
         String newAccessToken = jwtService.generateToken(username);
 
         return ResponseEntity.ok(Map.of("token", newAccessToken));
+    }
+
+    /**
+     * Start the password reset flow. Always returns 200 with a generic message —
+     * we never reveal whether the email is registered (anti-enumeration).
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        passwordResetService.requestReset(request.getEmail());
+        return ResponseEntity.ok(Map.of(
+                "message", "If that email is registered, a reset link is on its way."));
+    }
+
+    /** Complete the password reset with the emailed token + a new password. */
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        passwordResetService.reset(request.getToken(), request.getPassword());
+        return ResponseEntity.ok(Map.of("message", "Password updated. You can now sign in."));
     }
 
     @PostMapping("/logout")
