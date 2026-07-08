@@ -2,6 +2,7 @@ package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.ReportService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -13,11 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/reports")
 public class ReportController {
 
-    private final ReportService reportService;
-
-    public ReportController(ReportService reportService) {
-        this.reportService = reportService;
-    }
+    @Autowired
+    private ReportService reportService;
 
     @GetMapping("/dashboard")
     @PreAuthorize("hasAuthority('report:read')")

@@ -4,6 +4,7 @@ import com.adsyahir.invoice_hub_backend.dto.request.UpdateEinvoiceSettingsReques
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.EinvoiceSettingsService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -17,11 +18,8 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/settings/einvoice")
 public class EinvoiceSettingsController {
 
-    private final EinvoiceSettingsService service;
-
-    public EinvoiceSettingsController(EinvoiceSettingsService service) {
-        this.service = service;
-    }
+    @Autowired
+    private EinvoiceSettingsService service;
 
     @GetMapping
     @PreAuthorize("hasAuthority('settings:manage')")

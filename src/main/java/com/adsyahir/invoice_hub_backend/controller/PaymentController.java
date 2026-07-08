@@ -5,6 +5,7 @@ import com.adsyahir.invoice_hub_backend.dto.response.PaymentResponse;
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.PaymentService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -17,11 +18,8 @@ import java.util.UUID;
 @RequestMapping("/payments")
 public class PaymentController {
 
-    private final PaymentService paymentService;
-
-    public PaymentController(PaymentService paymentService) {
-        this.paymentService = paymentService;
-    }
+    @Autowired
+    private PaymentService paymentService;
 
     /** List all payments for the tenant, newest first. */
     @GetMapping

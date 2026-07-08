@@ -2,6 +2,7 @@ package com.adsyahir.invoice_hub_backend.controller;
 
 import com.adsyahir.invoice_hub_backend.model.UserPrincipal;
 import com.adsyahir.invoice_hub_backend.service.NotificationService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -11,11 +12,8 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/notifications")
 public class NotificationController {
 
-    private final NotificationService notificationService;
-
-    public NotificationController(NotificationService notificationService) {
-        this.notificationService = notificationService;
-    }
+    @Autowired
+    private NotificationService notificationService;
 
     /** The bell feed: newest notifications + unread count. Any authenticated user. */
     @GetMapping

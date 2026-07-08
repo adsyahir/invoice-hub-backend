@@ -4,6 +4,7 @@ import com.adsyahir.invoice_hub_backend.dto.request.PublicPaymentRequest;
 import com.adsyahir.invoice_hub_backend.service.InvoiceService;
 import com.adsyahir.invoice_hub_backend.service.PaymentService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,13 +17,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/public/invoices")
 public class PublicInvoiceController {
 
-    private final InvoiceService invoiceService;
-    private final PaymentService paymentService;
+    @Autowired
+    private InvoiceService invoiceService;
 
-    public PublicInvoiceController(InvoiceService invoiceService, PaymentService paymentService) {
-        this.invoiceService = invoiceService;
-        this.paymentService = paymentService;
-    }
+    @Autowired
+    private PaymentService paymentService;
 
     /** Resolve the tokenized link to a minimal public invoice view. */
     @GetMapping("/{token}")
