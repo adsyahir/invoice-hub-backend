@@ -23,6 +23,14 @@ spring:
   flyway:
     enabled: true
 
+  # host/port injected by AbstractIntegrationTest from the Redis Testcontainer.
+  data:
+    redis:
+      timeout: 2s
+
+  cache:
+    type: redis
+
   # Must mirror the main application.yml. This file SHADOWS it rather than merging with
   # it, so an omitted block does not inherit — it falls back to Spring's defaults. Leaving
   # this out silently gave the producer a StringSerializer, which cannot serialize an event

@@ -10,6 +10,7 @@ import com.adsyahir.invoice_hub_backend.enums.PaymentStatus;
 import com.adsyahir.invoice_hub_backend.model.Invoice;
 import com.adsyahir.invoice_hub_backend.model.Payment;
 import com.adsyahir.invoice_hub_backend.model.User;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,12 @@ public class ReportService {
         this.paymentRepo = paymentRepo;
     }
 
+    // Keyed on tenant id so everyone in the org shares one cached result (keying on the user
+    // would cache identical numbers once per person). condition skips caching when there is no
+    // tenant — a platform SUPER_ADMIN — because #currentUser.tenant.id would NPE, and its
+    // result is the empty-stats fallback anyway. Evicted by ReportCacheEvictor on every write.
+    @Cacheable(value = "dashboard", key = "#currentUser.tenant.id",
+            condition = "#currentUser.tenant != null")
     @Transactional(readOnly = true)
     public DashboardStats dashboard(User currentUser) {
         String currency = currencyOf(currentUser);
@@ -86,6 +93,8 @@ public class ReportService {
                 pctChange(invoicedLast, invoicedThis), pctChange(paidLast, paidThis));
     }
 
+    @Cacheable(value = "revenue", key = "#currentUser.tenant.id",
+            condition = "#currentUser.tenant != null")
     @Transactional(readOnly = true)
     public List<RevenuePoint> revenue(User currentUser) {
         List<RevenuePoint> points = new ArrayList<>();
@@ -110,6 +119,8 @@ public class ReportService {
         return points;
     }
 
+    @Cacheable(value = "aging", key = "#currentUser.tenant.id",
+            condition = "#currentUser.tenant != null")
     @Transactional(readOnly = true)
     public List<AgingBucket> aging(User currentUser) {
         // bucket label -> [amount, count]

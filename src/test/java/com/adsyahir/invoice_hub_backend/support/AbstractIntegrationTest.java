@@ -1,11 +1,13 @@
 package com.adsyahir.invoice_hub_backend.support;
 
+import com.redis.testcontainers.RedisContainer;
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -54,9 +56,14 @@ public abstract class AbstractIntegrationTest {
     private static final KafkaContainer KAFKA =
             new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.7.1"));
 
+    /** Real Redis, so @Cacheable/@CacheEvict and the rate-limit INCR are genuinely exercised. */
+    private static final RedisContainer REDIS =
+            new RedisContainer(DockerImageName.parse("redis:7-alpine"));
+
     static {
         POSTGRES.start();
         KAFKA.start();
+        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -67,6 +74,9 @@ public abstract class AbstractIntegrationTest {
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
 
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getFirstMappedPort());
     }
 
     @Autowired
@@ -74,6 +84,15 @@ public abstract class AbstractIntegrationTest {
 
     @Autowired
     protected TestFixtures fixtures;
+
+    @Autowired
+    protected StringRedisTemplate redis;
+
+    /** Clear the cache + rate-limit counters between tests so nothing leaks across them. */
+    @BeforeEach
+    void flushRedis() {
+        redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+    }
 
     /**
      * No real SMTP in tests. Without this, InvoiceEmailConsumer would fail against a dead

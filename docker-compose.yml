@@ -10,7 +10,7 @@ services:
       # changing it later needs `docker compose down -v` to take effect.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — see .env.example}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - invoicehub-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -24,8 +24,8 @@ services:
     image: axllent/mailpit
     container_name: invoicehub-mailpit
     ports:
-      - "1026:1025" # SMTP port, Spring Boot connects here
-      - "8026:8025" # Web UI, you view emails here
+      - "${MAILPIT_SMTP_PORT:-1026}:1025" # SMTP port, Spring Boot connects here
+      - "${MAILPIT_UI_PORT:-8026}:8025"   # Web UI, you view emails here
     restart: unless-stopped
 
   backend:
@@ -41,6 +41,8 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
+      redis:
+        condition: service_healthy   # add
     environment:
       # Spring relaxed-binding maps these env vars onto the properties in
       # application.properties, so containers talk over the compose network
@@ -58,21 +60,29 @@ services:
       # OpenRouter API key for Spring AI — REQUIRED (app fails at startup if unset).
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env — see .env.example}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Host is the compose service name, NOT ${REDIS_HOST} from .env — inside the
+      # network "localhost" would mean this container. Same rule as db/kafka. Port is
+      # always the container-internal 6379 regardless of the host-side mapping below.
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
     ports:
-      - "8100:8100"
+      - "${BACKEND_PORT:-8100}:8100"
     restart: unless-stopped
   kafka:
     image: confluentinc/cp-kafka:7.7.1
     container_name: invoicehub-kafka
     ports:
-      - "9092:9092"          # host -> broker (your IDE / local app)
+      - "${KAFKA_PORT:-9092}:9092"   # host -> broker (your IDE / local app)
     environment:
       CLUSTER_ID: invoicehub-kraft-cluster-01
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      # The PLAINTEXT_HOST port MUST equal the host-published port above (${KAFKA_PORT}):
+      # a local client connects, then the broker tells it to reconnect to this advertised
+      # address. If the two disagree, the client reconnects to the wrong port and hangs.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -103,7 +113,7 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "8090:8080"   # 8080 clashes too often, and the backend already holds 8100
+      - "${KAFKA_UI_PORT:-8090}:8080"   # 8080 clashes too often, and the backend already holds 8100
     environment:
       KAFKA_CLUSTERS_0_NAME: invoicehub
       # kafka:29092 — the INTERNAL listener. This container sits on the compose network, so
@@ -112,5 +122,19 @@ services:
       DYNAMIC_CONFIG_ENABLED: "true"
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: invoicehub-redis
+    ports:
+      # Host-side port from .env (REDIS_PORT), default 6379. Only affects how your
+      # local IDE run reaches the container; container-to-container is always 6379.
+      - "${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 volumes:
   invoicehub-db-data:

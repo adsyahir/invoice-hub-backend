@@ -30,6 +30,7 @@ public class PaymentService {
     private final AuditService auditService;
     private final NotificationService notificationService;
     private final ApplicationEventPublisher events;
+    private final ReportCacheEvictor reportCacheEvictor;
 
 
     private static String invoiceLink(Invoice invoice) {
@@ -266,6 +267,14 @@ public class PaymentService {
         }
 
         invoiceRepo.save(invoice);
+
+        // Every payment path (create / refund / payViaLink) funnels through here, and each
+        // changes amountPaid / amountDue / status — the exact inputs to the cached reports. So
+        // this is the one place to evict. reportCacheEvictor is a separate bean, so the call
+        // goes through its proxy and @CacheEvict actually fires (a same-bean call would not).
+        if (invoice.getTenant() != null) {
+            reportCacheEvictor.evict(invoice.getTenant().getId());
+        }
     }
 
     private void requireTenant(User user) {

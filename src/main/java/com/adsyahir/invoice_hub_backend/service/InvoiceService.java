@@ -49,6 +49,7 @@ public class InvoiceService {
     private final InvoicePdfService pdfService;
     private final NotificationService notificationService;
     private final ApplicationEventPublisher events;
+    private final ReportCacheEvictor reportCacheEvictor;
 
     // No JavaMailSender here any more: outbound email moved to InvoiceEmailService,
     // driven by a Kafka consumer. This service no longer does I/O it cannot roll back.
@@ -56,6 +57,13 @@ public class InvoiceService {
 
     private static String invoiceLink(Invoice invoice) {
         return "/invoices/" + invoice.getUuid();
+    }
+
+    /** Drop the tenant's cached reports after a write that changes their figures. */
+    private void evictReports(Invoice invoice) {
+        if (invoice.getTenant() != null) {
+            reportCacheEvictor.evict(invoice.getTenant().getId());
+        }
     }
 
     /**
@@ -147,6 +155,7 @@ public class InvoiceService {
         Invoice saved = invoiceRepo.save(invoice); // cascades line items
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "CREATED", currentUser,
                 "Created invoice " + saved.getInvoiceNumber() + " for " + total);
+        evictReports(saved);
         return saved;
     }
 
@@ -277,6 +286,7 @@ public class InvoiceService {
                 saved.getInvoiceNumber(),
                 clientEmail(saved)));
 
+        evictReports(saved);   // status DRAFT -> SENT moves outstanding/aging figures
         return toResponse(saved);
     }
 
@@ -296,6 +306,7 @@ public class InvoiceService {
         Invoice saved = invoiceRepo.save(invoice);
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "VOIDED", currentUser,
                 "Voided " + saved.getInvoiceNumber());
+        evictReports(saved);   // a voided invoice drops out of every report total
         return toResponse(saved);
     }
 
@@ -347,6 +358,7 @@ public class InvoiceService {
         Invoice saved = invoiceRepo.save(copy);
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "DUPLICATED", currentUser,
                 "Duplicated " + src.getInvoiceNumber() + " -> " + saved.getInvoiceNumber());
+        evictReports(saved);   // new DRAFT copy; harmless even though a draft isn't in totals yet
         return toResponse(saved);
     }
 
@@ -371,6 +383,9 @@ public class InvoiceService {
                         inv.getInvoiceNumber() + " is past due (" + inv.getDueDate() + ") with "
                                 + inv.getCurrency() + " " + nz(inv.getAmountDue()) + " outstanding.",
                         invoiceLink(inv));
+                // Runs on the cron thread, across every tenant — evict each affected one.
+                // Flipping to OVERDUE changes both totalOverdue and the aging buckets.
+                evictReports(inv);
                 count++;
             }
         }
