@@ -7,7 +7,10 @@ import com.adsyahir.invoice_hub_backend.dto.response.PaymentResponse;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.PaymentMethod;
 import com.adsyahir.invoice_hub_backend.enums.PaymentStatus;
+import com.adsyahir.invoice_hub_backend.event.PaymentRecordedEvent;
 import com.adsyahir.invoice_hub_backend.model.*;
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,20 +22,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
+@RequiredArgsConstructor
 public class PaymentService {
 
     private final PaymentRepo paymentRepo;
     private final InvoiceRepo invoiceRepo;
     private final AuditService auditService;
     private final NotificationService notificationService;
+    private final ApplicationEventPublisher events;
 
-    public PaymentService(PaymentRepo paymentRepo, InvoiceRepo invoiceRepo,
-                          AuditService auditService, NotificationService notificationService) {
-        this.paymentRepo = paymentRepo;
-        this.invoiceRepo = invoiceRepo;
-        this.auditService = auditService;
-        this.notificationService = notificationService;
-    }
 
     private static String invoiceLink(Invoice invoice) {
         return "/invoices/" + invoice.getUuid();
@@ -83,6 +81,17 @@ public class PaymentService {
         auditService.record(invoice.getTenant(), "PAYMENT", payment.getId(), "RECORDED", currentUser,
                 "Recorded " + invoice.getCurrency() + " " + amount + " against " + invoice.getInvoiceNumber());
         notifyPayment(invoice, amount, "Payment recorded");
+
+        // Published AFTER recomputeAndSaveInvoice: that call is what flips the invoice to PAID,
+        // so reading the status any earlier would always report settlesInvoice = false.
+        // The receipt email is sent by PaymentReceiptConsumer once this transaction commits.
+        events.publishEvent(PaymentRecordedEvent.of(
+                invoice.getTenant().getId(),
+                invoice.getId(),
+                payment.getUuid(),
+                amount,
+                invoice.getCurrency(),
+                invoice.getStatus() == InvoiceStatus.PAID));
 
         return toResponse(payment);
     }
@@ -174,6 +183,15 @@ public class PaymentService {
                 "Online payment of " + invoice.getCurrency() + " " + due + " via " + method);
         notifyPayment(invoice, due, "Online payment received");
 
+        // A client who paid through the public link gets a receipt too.
+        events.publishEvent(PaymentRecordedEvent.of(
+                invoice.getTenant().getId(),
+                invoice.getId(),
+                payment.getUuid(),
+                due,
+                invoice.getCurrency(),
+                invoice.getStatus() == InvoiceStatus.PAID));
+
         return toResponse(payment);
     }
 
@@ -216,7 +234,12 @@ public class PaymentService {
                 .map(Payment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal paid = completed.subtract(refunded).setScale(2, RoundingMode.HALF_UP);
+        // A refund flips the payment COMPLETED -> REFUNDED, so a refunded payment is
+        // ALREADY excluded from `completed`. Subtracting `refunded` here as well would
+        // count it twice: refunding a fully-paid RM1,080 invoice produced an amountPaid
+        // of -1,080.00 and an amountDue of 2,160.00. What is still paid is exactly the
+        // sum of the payments that are still COMPLETED.
+        BigDecimal paid = completed.setScale(2, RoundingMode.HALF_UP);
         BigDecimal total = nz(invoice.getTotalAmount());
         BigDecimal outstanding = total.subtract(paid);
 

@@ -6,6 +6,8 @@ import com.adsyahir.invoice_hub_backend.dto.request.CreateInvoiceRequest;
 import com.adsyahir.invoice_hub_backend.dto.LineItemRequest;
 import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
+import com.adsyahir.invoice_hub_backend.event.EInvoiceSubmissionRequested;
+import com.adsyahir.invoice_hub_backend.event.InvoiceSentEvent;
 import com.adsyahir.invoice_hub_backend.exception.ValidationException;
 import com.adsyahir.invoice_hub_backend.dto.response.AuditLogResponse;
 import com.adsyahir.invoice_hub_backend.dto.response.PublicInvoiceResponse;
@@ -13,13 +15,13 @@ import com.adsyahir.invoice_hub_backend.model.Client;
 import com.adsyahir.invoice_hub_backend.model.Invoice;
 import com.adsyahir.invoice_hub_backend.model.InvoiceLineItem;
 import com.adsyahir.invoice_hub_backend.model.User;
-import jakarta.mail.internet.MimeMessage;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -36,6 +38,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class InvoiceService {
 
     private static final Logger log = LoggerFactory.getLogger(InvoiceService.class);
@@ -44,22 +47,12 @@ public class InvoiceService {
     private final ClientRepo clientRepo;
     private final AuditService auditService;
     private final InvoicePdfService pdfService;
-    private final JavaMailSender mailSender;
     private final NotificationService notificationService;
+    private final ApplicationEventPublisher events;
 
-    @Value("${app.base-url:http://localhost:5173}")
-    private String appBaseUrl;
+    // No JavaMailSender here any more: outbound email moved to InvoiceEmailService,
+    // driven by a Kafka consumer. This service no longer does I/O it cannot roll back.
 
-    public InvoiceService(InvoiceRepo invoiceRepo, ClientRepo clientRepo,
-                          AuditService auditService, InvoicePdfService pdfService,
-                          JavaMailSender mailSender, NotificationService notificationService) {
-        this.invoiceRepo = invoiceRepo;
-        this.clientRepo = clientRepo;
-        this.auditService = auditService;
-        this.pdfService = pdfService;
-        this.mailSender = mailSender;
-        this.notificationService = notificationService;
-    }
 
     private static String invoiceLink(Invoice invoice) {
         return "/invoices/" + invoice.getUuid();
@@ -186,13 +179,19 @@ public class InvoiceService {
     private static final String MYINVOIS_PORTAL = "https://myinvois.hasil.gov.my";
 
     /**
-     * Submit an invoice to LHDN MyInvois.
+     * Queue an invoice for submission to LHDN MyInvois.
      *
-     * TODO(integration): this simulates the round-trip. A real implementation
-     * builds the UBL 2.1 document, POSTs it to the MyInvois API, and the invoice
-     * goes PENDING first; a poll/webhook later flips it to VALIDATED (with the
-     * LHDN UUID + long id) or REJECTED. Here we validate synchronously so the UI
-     * can be exercised end-to-end.
+     * <p>This is deliberately ASYNCHRONOUS, because MyInvois itself is: you submit a
+     * document and LHDN validates it later, then issues the UUID + long id. So this
+     * method only marks the invoice PENDING and publishes a command; EInvoiceConsumer
+     * performs the submission and flips it to VALIDATED or REJECTED.
+     *
+     * <p>The API therefore returns PENDING, not VALIDATED — the frontend polls until the
+     * badge changes.
+     *
+     * <p>TODO(integration): the consumer still SIMULATES the round-trip. Replacing the
+     * simulation with a real UBL 2.1 build + signed POST to the MyInvois API is now a
+     * change to the consumer alone; nothing here moves.
      */
     @Transactional
     public InvoiceResponse submitEInvoice(UUID uuid, User currentUser) {
@@ -211,26 +210,19 @@ public class InvoiceService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This invoice has already been submitted to MyInvois");
         }
 
-        // --- simulate a successful LHDN validation ---
-        LocalDateTime now = LocalDateTime.now();
-        String lhdnUuid = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-        String longId = lhdnUuid + invoice.getInvoiceNumber().replaceAll("\\D", "");
-
-        invoice.setEinvoiceStatus(EInvoiceStatus.VALIDATED);
-        invoice.setMyinvoisUuid(lhdnUuid);
-        invoice.setMyinvoisLongId(longId);
-        invoice.setEinvoiceValidationUrl(MYINVOIS_PORTAL + "/" + lhdnUuid + "/share/" + longId);
-        invoice.setEinvoiceSubmittedAt(now);
-        invoice.setEinvoiceValidatedAt(now);
-        invoice.setEinvoiceRejectionReason(null); // clear any previous rejection on resubmit
+        invoice.setEinvoiceStatus(EInvoiceStatus.PENDING);
+        invoice.setEinvoiceSubmittedAt(LocalDateTime.now());
+        invoice.setEinvoiceRejectionReason(null);   // clear any previous rejection on resubmit
 
         Invoice saved = invoiceRepo.save(invoice);
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "EINVOICE_SUBMITTED", currentUser,
-                "Submitted " + saved.getInvoiceNumber() + " to MyInvois (validated)");
-        notificationService.notify(saved.getTenant(), "EINVOICE_VALIDATED",
-                "E-invoice validated: " + saved.getInvoiceNumber(),
-                saved.getInvoiceNumber() + " was validated by LHDN MyInvois.",
-                invoiceLink(saved));
+                "Queued " + saved.getInvoiceNumber() + " for MyInvois submission");
+
+        // Relayed to Kafka after this transaction commits — so the consumer can never see
+        // an invoice that is not yet PENDING in the database.
+        events.publishEvent(EInvoiceSubmissionRequested.of(
+                saved.getTenant().getId(), saved.getId(), saved.getUuid()));
+
         return toResponse(saved);
     }
 
@@ -266,13 +258,25 @@ public class InvoiceService {
         }
 
         Invoice saved = invoiceRepo.save(invoice);
-        emailInvoice(saved);   // best-effort
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "SENT", currentUser,
                 "Sent " + saved.getInvoiceNumber() + " to " + clientEmail(saved));
         notificationService.notify(saved.getTenant(), "INVOICE_SENT",
                 "Invoice sent: " + saved.getInvoiceNumber(),
                 saved.getInvoiceNumber() + " was sent to " + clientEmail(saved) + ".",
                 invoiceLink(saved));
+
+        // Delivery is now a consumer's job: DomainEventRelay forwards this to Kafka once
+        // the transaction commits, and InvoiceEmailConsumer renders the PDF and sends the
+        // mail — with retries and a dead-letter topic. The old inline emailInvoice() call
+        // had to swallow its own failures to avoid breaking the send; now a failure is
+        // simply retried instead of silently dropped.
+        events.publishEvent(InvoiceSentEvent.of(
+                saved.getTenant().getId(),
+                saved.getId(),
+                saved.getUuid(),
+                saved.getInvoiceNumber(),
+                clientEmail(saved)));
+
         return toResponse(saved);
     }
 
@@ -471,41 +475,6 @@ public class InvoiceService {
         return v != null ? v : BigDecimal.ZERO;
     }
 
-    /** Best-effort: email the client the invoice PDF and a pay link. Never throws. */
-    private void emailInvoice(Invoice invoice) {
-        String to = invoice.getClient() != null ? invoice.getClient().getEmail() : null;
-        if (to == null || to.isBlank()) {
-            log.info("Invoice {} sent but client has no email — skipping delivery", invoice.getInvoiceNumber());
-            return;
-        }
-        try {
-            byte[] pdf = pdfService.render(invoice);
-            String payLink = appBaseUrl + "/pay/" + invoice.getPaymentLinkToken();
-            String org = invoice.getTenant() != null ? invoice.getTenant().getName() : "InvoiceHub";
-
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom("no-reply@invoicehub.local");
-            helper.setTo(to);
-            helper.setSubject("Invoice " + invoice.getInvoiceNumber() + " from " + org);
-            helper.setText("""
-                    <p>Hello,</p>
-                    <p>Please find attached invoice <strong>%s</strong> for <strong>%s %s</strong>,
-                    due %s.</p>
-                    <p>You can view and pay online here:<br/>
-                    <a href="%s">%s</a></p>
-                    <p>Thank you,<br/>%s</p>
-                    """.formatted(
-                    invoice.getInvoiceNumber(), invoice.getCurrency(), nz(invoice.getAmountDue()),
-                    invoice.getDueDate(), payLink, payLink, org), true);
-            helper.addAttachment(invoice.getInvoiceNumber() + ".pdf",
-                    new org.springframework.core.io.ByteArrayResource(pdf), "application/pdf");
-            mailSender.send(message);
-            log.info("Emailed invoice {} to {}", invoice.getInvoiceNumber(), to);
-        } catch (Exception e) {
-            log.warn("Failed to email invoice {} to {}: {}", invoice.getInvoiceNumber(), to, e.getMessage());
-        }
-    }
 
     /** Map an Invoice entity to the flat API DTO (no tenant / proxy leakage). */
     private InvoiceResponse toResponse(Invoice inv) {

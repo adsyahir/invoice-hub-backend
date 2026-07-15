@@ -54,9 +54,14 @@ public class Client {
 
     private String country;
 
+    // @Builder.Default is required on every initialized field: without it,
+    // Client.builder() ignores the initializer and the column comes out NULL,
+    // which the NOT NULL constraint then rejects at insert time.
+    @Builder.Default
     @Column(nullable = false, length = 3)
     private String currency = "MYR";
 
+    @Builder.Default
     @Column(name = "payment_terms_days", nullable = false)
     private Integer paymentTermsDays = 30;
 
@@ -72,6 +77,7 @@ public class Client {
     @JoinColumn(name = "postcode_id")
     private Postcode postcode;
 
+    @Builder.Default
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

@@ -38,8 +38,8 @@ public class Tenant {
     @Column(name = "billing_email", nullable = true)
     private String billingEmail;
 
-    @Column(name = "default_currency", nullable = false)
-    private String defaultCurrency = "MYR";
+    @Column(name = "default_currency", nullable = false, length = 3)
+    private String defaultCurrency = "MYR";   // ISO 4217
 
     @Column(name = "tax_id", nullable = true)
     private String taxId;

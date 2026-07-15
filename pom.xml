@@ -31,6 +31,7 @@
 		<java.version>25</java.version>
 		<!-- Spring AI 2.0.x is the line that targets Spring Boot 4. -->
 		<spring-ai.version>2.0.0</spring-ai.version>
+		<testcontainers.version>1.21.3</testcontainers.version>
 	</properties>
 
 	<!-- Spring AI BOM: supplies the version for spring-ai-starter-* deps so they
@@ -45,10 +46,26 @@
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
+			<!-- Testcontainers BOM: the Spring Boot 4 parent doesn't manage these
+			     versions, so the BOM supplies them for junit-jupiter/postgresql. -->
+			<dependency>
+				<groupId>org.testcontainers</groupId>
+				<artifactId>testcontainers-bom</artifactId>
+				<version>${testcontainers.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 
 	<dependencies>
+		<!-- The starter, not the bare spring-kafka jar: Spring Boot 4 moved autoconfiguration
+		     into per-technology modules, so spring-kafka alone gives you the client but no
+		     KafkaProperties / KafkaAutoConfiguration (no spring.kafka.* binding). -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-kafka</artifactId>
+		</dependency>
 			<dependency>
 				<groupId>org.springframework.ai</groupId>
 				<artifactId>spring-ai-starter-model-openai</artifactId>
@@ -145,6 +162,39 @@
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+		<!-- Testcontainers: integration tests run against a throwaway PostgreSQL
+		     container (the same engine as production), with the real Flyway
+		     migrations applied. Rules out the class of bug an in-memory DB hides —
+		     JSONB, ON CONFLICT, sequence and transaction semantics.
+		     Note: we deliberately do NOT use org.testcontainers:junit-jupiter.
+		     Spring Boot 4 ships JUnit 6, and that module's @Testcontainers
+		     extension targets JUnit 5. AbstractIntegrationTest starts a single
+		     container itself and wires it in via @DynamicPropertySource, which is
+		     engine-agnostic. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- Throwaway Kafka broker for the async-flow integration tests. -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>kafka</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- Async assertions: "wait until the consumer has done X", never Thread.sleep. -->
+		<dependency>
+			<groupId>org.awaitility</groupId>
+			<artifactId>awaitility</artifactId>
+			<scope>test</scope>
+		</dependency>
+
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-api</artifactId>
@@ -177,6 +227,33 @@
 						</exclude>
 					</excludes>
 				</configuration>
+			</plugin>
+			<!-- Integration tests (*IT) run under Failsafe in the `verify` phase, not
+			     Surefire's `test` phase. They need Docker and take seconds to boot a
+			     PostgreSQL container, so they stay out of the fast unit-test loop:
+			       ./mvnw test     -> unit tests only
+			       ./mvnw verify   -> unit + integration tests -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<!-- docker-java (bundled with Testcontainers) negotiates Docker API
+						     v1.32 by default. Docker Engine 29 requires >= 1.40 and answers
+						     older versions with HTTP 400, which surfaces as the misleading
+						     "Could not find a valid Docker environment". Pinning the API
+						     version here fixes it without an env var on every machine. -->
+						<api.version>1.44</api.version>
+					</systemPropertyVariables>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

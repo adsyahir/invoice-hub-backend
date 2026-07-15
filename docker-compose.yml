@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      kafka:
+        condition: service_healthy
     environment:
       # Spring relaxed-binding maps these env vars onto the properties in
       # application.properties, so containers talk over the compose network
@@ -55,8 +57,59 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       # OpenRouter API key for Spring AI — REQUIRED (app fails at startup if unset).
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env — see .env.example}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     ports:
       - "8100:8100"
+    restart: unless-stopped
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: invoicehub-kafka
+    ports:
+      - "9092:9092"          # host -> broker (your IDE / local app)
+    environment:
+      CLUSTER_ID: invoicehub-kraft-cluster-01
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Web UI for the broker: http://localhost:8090
+  #
+  # Browse messages on invoicehub.invoice-events / payment-events / einvoice-commands,
+  # watch consumer-group lag per group (invoice-email, payment-receipt, einvoice-submitter),
+  # and — the useful one — read and REPLAY records that ended up on a *-dlt topic after
+  # their retries were exhausted.
+  #
+  # kafbat/kafka-ui is the maintained fork of the (now abandoned) provectuslabs/kafka-ui.
+  kafka-ui:
+    image: kafbat/kafka-ui:latest
+    container_name: invoicehub-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8090:8080"   # 8080 clashes too often, and the backend already holds 8100
+    environment:
+      KAFKA_CLUSTERS_0_NAME: invoicehub
+      # kafka:29092 — the INTERNAL listener. This container sits on the compose network, so
+      # localhost:9092 here would mean "this container", not the broker.
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: "true"
     restart: unless-stopped
 
 volumes:

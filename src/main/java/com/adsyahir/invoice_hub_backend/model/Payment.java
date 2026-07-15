@@ -55,6 +55,9 @@ public class Payment {
     @Column(nullable = false, length = 50)
     private PaymentMethod method;
 
+    // @Builder.Default: without it the builder drops this initializer and status
+    // inserts as NULL (NOT NULL violation). Callers happen to always set it today.
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private PaymentStatus status = PaymentStatus.PENDING;

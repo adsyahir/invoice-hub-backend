@@ -1,0 +1,92 @@
+# Test configuration. This file SHADOWS src/main/resources/application.yml on the
+# test classpath (test-classes precedes classes), so it is the whole config for a
+# test run — nothing from the main file leaks in.
+#
+# Deliberately hermetic:
+#   - no `spring.config.import` of .env, so a developer's real secrets are never
+#     read by the test suite
+#   - no `spring.datasource.*`; AbstractIntegrationTest supplies the URL/user/pass
+#     of the Testcontainers PostgreSQL via @DynamicPropertySource
+#   - ddl-auto: validate — Flyway owns the schema and Hibernate only checks that
+#     the entities agree with it. (The main app runs `update`, which silently
+#     patches drift; in tests we want that drift to fail loudly.)
+spring:
+  application:
+    name: invoice-hub-backend
+
+  jpa:
+    show-sql: false
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    enabled: true
+
+  # Must mirror the main application.yml. This file SHADOWS it rather than merging with
+  # it, so an omitted block does not inherit — it falls back to Spring's defaults. Leaving
+  # this out silently gave the producer a StringSerializer, which cannot serialize an event
+  # record ("Can't convert value of class InvoiceSentEvent to StringSerializer").
+  # bootstrap-servers is injected by AbstractIntegrationTest from the Kafka container.
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: invoicehub
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: com.adsyahir.invoice_hub_backend.event
+    listener:
+      ack-mode: record
+
+  docker:
+    compose:
+      enabled: false
+
+  # No SMTP server in tests. Invoice send() emails best-effort and swallows the
+  # failure, so a dead port here is the intended path.
+  mail:
+    host: localhost
+    port: 3025
+
+  # Spring AI needs an api-key property to bind. Nothing calls the model in these
+  # tests; this is a placeholder, not a credential.
+  ai:
+    openai:
+      base-url: http://localhost:0/v1
+      api-key: test-not-a-real-key
+      chat:
+        options:
+          model: test-model
+
+server:
+  port: 0
+  servlet:
+    context-path: /api
+
+app:
+  base-url: http://localhost:5173
+  cors:
+    allowed-origins: http://localhost:5173
+  cookie:
+    secure: false
+
+# Test-only signing key. Not used anywhere but the test JVM.
+jwt:
+  secret: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  access-token-minutes: 30
+
+logging:
+  level:
+    org.testcontainers: INFO
+    com.github.dockerjava: WARN
+    org.flywaydb: INFO
+    com.adsyahir.invoice_hub_backend: DEBUG
