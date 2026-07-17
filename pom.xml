@@ -227,6 +227,20 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- Full-text search (invoices/clients typeahead). The starter brings
+		     spring-data-elasticsearch + the elasticsearch-java client, and binds
+		     spring.elasticsearch.* properties. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+		</dependency>
+		<!-- Throwaway Elasticsearch node for the search integration tests. -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>elasticsearch</artifactId>
+			<scope>test</scope>
+		</dependency>
+
 	</dependencies>
 
 	<build>

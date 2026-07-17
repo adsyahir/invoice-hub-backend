@@ -8,9 +8,11 @@ import com.adsyahir.invoice_hub_backend.dao.StateRepo;
 import com.adsyahir.invoice_hub_backend.dto.request.CreateClientRequest;
 import com.adsyahir.invoice_hub_backend.dto.request.UpdateClientRequest;
 import com.adsyahir.invoice_hub_backend.dto.response.ClientResponse;
+import com.adsyahir.invoice_hub_backend.event.SearchIndexRequested;
 import com.adsyahir.invoice_hub_backend.exception.ValidationException;
 import com.adsyahir.invoice_hub_backend.model.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +43,13 @@ public class ClientService {
     @Autowired
     private InvoiceRepo invoiceRepo;
 
+    @Autowired
+    private ApplicationEventPublisher events;
+
+    // @Transactional matters here beyond atomicity: the search-index event is relayed
+    // to Kafka by an AFTER_COMMIT listener. Without an active transaction, Spring
+    // discards a @TransactionalEventListener event silently — nothing gets indexed.
+    @Transactional
     public Client createClient(CreateClientRequest request, User currentUser) {
         if (!stateRepo.existsById(request.getState())) {
             throw new ValidationException(Map.of("state", "State not found"));
@@ -73,7 +82,10 @@ public class ClientService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        return clientRepo.save(client);
+        Client saved = clientRepo.save(client);
+        events.publishEvent(SearchIndexRequested.client(
+                saved.getTenant().getId(), saved.getId()));
+        return saved;
     }
 
     private Long parseId(String value, String fieldName, String errorMessage) {
@@ -113,6 +125,10 @@ public class ClientService {
 
             // 4. Soft delete the client (deleteById triggers @SQLDelete -> sets deleted_at).
             clientRepo.deleteById(id);
+
+            // 5. Drop the client + their invoices from the search index (after commit).
+            events.publishEvent(SearchIndexRequested.clientDeleted(
+                    currentUser.getTenant().getId(), id));
 
         } catch (RuntimeException e) {
             throw e;
@@ -169,7 +185,12 @@ public class ClientService {
         client.setCity(cityRepo.getReferenceById(request.getCity()));
         client.setPostcode(postcodeRepo.getReferenceById(request.getPostcode()));
 
-        return toResponse(clientRepo.save(client));
+        Client saved = clientRepo.save(client);
+        // A rename must also refresh the client's invoice documents (clientName is
+        // denormalized there) — the consumer handles that fan-out.
+        events.publishEvent(SearchIndexRequested.client(
+                saved.getTenant().getId(), saved.getId()));
+        return toResponse(saved);
     }
 
     private ClientResponse toResponse(Client c) {

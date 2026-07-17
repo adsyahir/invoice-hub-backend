@@ -46,4 +46,8 @@ public interface InvoiceRepo extends JpaRepository<Invoice, Long> {
     // has passed. @SQLRestriction already excludes soft-deleted rows.
     List<Invoice> findByStatusInAndDueDateBefore(Collection<InvoiceStatus> statuses, LocalDate date);
 
+    // Search reindex after a client rename: their live invoices carry a denormalized
+    // clientName in the Elasticsearch document. @SQLRestriction filters soft-deleted.
+    List<Invoice> findAllByClientId(Long clientId);
+
 }

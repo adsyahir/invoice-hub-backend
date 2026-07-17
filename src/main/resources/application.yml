@@ -52,6 +52,11 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 2s
+
+  # Full-text search. Local run reads ELASTICSEARCH_HOST/PORT from .env; in Docker
+  # the SPRING_ELASTICSEARCH_URIS env var overrides this with the service name.
+  elasticsearch:
+    uris: http://${ELASTICSEARCH_HOST:localhost}:${ELASTICSEARCH_PORT:9200}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:

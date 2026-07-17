@@ -43,6 +43,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy   # add
+      elasticsearch:
+        condition: service_healthy
     environment:
       # Spring relaxed-binding maps these env vars onto the properties in
       # application.properties, so containers talk over the compose network
@@ -65,6 +67,9 @@ services:
       # always the container-internal 6379 regardless of the host-side mapping below.
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: "6379"
+      # Service name, same rule as db/kafka/redis: inside the compose network
+      # "localhost" would mean this container itself.
+      SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
     ports:
       - "${BACKEND_PORT:-8100}:8100"
     restart: unless-stopped
@@ -122,6 +127,31 @@ services:
       DYNAMIC_CONFIG_ENABLED: "true"
     restart: unless-stopped
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.0
+    container_name: invoicehub-elasticsearch
+    environment:
+      # Single node — no cluster formation, no replicas expected (so index health
+      # is green, not yellow).
+      discovery.type: single-node
+      # Dev only: no TLS/auth. NEVER do this on a network-reachable production node —
+      # an open ES port means anyone can read or wipe every index.
+      xpack.security.enabled: "false"
+      # ES defaults to half the host RAM; cap it — search over invoices is tiny.
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      # Host-side port from .env (ELASTICSEARCH_PORT), default 9200. Container-to-
+      # container is always 9200 (backend uses the service name below).
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - invoicehub-es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: invoicehub-redis
@@ -138,3 +168,4 @@ services:
     restart: unless-stopped
 volumes:
   invoicehub-db-data:
+  invoicehub-es-data:

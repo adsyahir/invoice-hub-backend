@@ -34,6 +34,9 @@ public class KafkaTopicConfig {
     /** Commands: asks for work to be done (submit this invoice to LHDN). */
     public static final String EINVOICE_COMMANDS = "invoicehub.einvoice-commands";
 
+    /** Commands: refresh the Elasticsearch document for one invoice/client. */
+    public static final String SEARCH_INDEX = "invoicehub.search-index";
+
     @Bean
     NewTopic invoiceEvents() {
         return TopicBuilder.name(INVOICE_EVENTS).partitions(3).replicas(1).build();
@@ -47,6 +50,11 @@ public class KafkaTopicConfig {
     @Bean
     NewTopic eInvoiceCommands() {
         return TopicBuilder.name(EINVOICE_COMMANDS).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    NewTopic searchIndex() {
+        return TopicBuilder.name(SEARCH_INDEX).partitions(3).replicas(1).build();
     }
 
     /**

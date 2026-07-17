@@ -8,6 +8,7 @@ import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import com.adsyahir.invoice_hub_backend.event.EInvoiceSubmissionRequested;
 import com.adsyahir.invoice_hub_backend.event.InvoiceSentEvent;
+import com.adsyahir.invoice_hub_backend.event.SearchIndexRequested;
 import com.adsyahir.invoice_hub_backend.exception.ValidationException;
 import com.adsyahir.invoice_hub_backend.dto.response.AuditLogResponse;
 import com.adsyahir.invoice_hub_backend.dto.response.PublicInvoiceResponse;
@@ -63,6 +64,14 @@ public class InvoiceService {
     private void evictReports(Invoice invoice) {
         if (invoice.getTenant() != null) {
             reportCacheEvictor.evict(invoice.getTenant().getId());
+        }
+    }
+
+    /** Queue a search-index refresh (relayed to Kafka after commit; consumer writes ES). */
+    private void queueSearchIndex(Invoice invoice) {
+        if (invoice.getTenant() != null) {
+            events.publishEvent(SearchIndexRequested.invoice(
+                    invoice.getTenant().getId(), invoice.getId()));
         }
     }
 
@@ -156,6 +165,7 @@ public class InvoiceService {
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "CREATED", currentUser,
                 "Created invoice " + saved.getInvoiceNumber() + " for " + total);
         evictReports(saved);
+        queueSearchIndex(saved);
         return saved;
     }
 
@@ -287,6 +297,7 @@ public class InvoiceService {
                 clientEmail(saved)));
 
         evictReports(saved);   // status DRAFT -> SENT moves outstanding/aging figures
+        queueSearchIndex(saved);   // status is indexed
         return toResponse(saved);
     }
 
@@ -307,6 +318,7 @@ public class InvoiceService {
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "VOIDED", currentUser,
                 "Voided " + saved.getInvoiceNumber());
         evictReports(saved);   // a voided invoice drops out of every report total
+        queueSearchIndex(saved);
         return toResponse(saved);
     }
 
@@ -359,6 +371,7 @@ public class InvoiceService {
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "DUPLICATED", currentUser,
                 "Duplicated " + src.getInvoiceNumber() + " -> " + saved.getInvoiceNumber());
         evictReports(saved);   // new DRAFT copy; harmless even though a draft isn't in totals yet
+        queueSearchIndex(saved);
         return toResponse(saved);
     }
 
@@ -386,6 +399,7 @@ public class InvoiceService {
                 // Runs on the cron thread, across every tenant — evict each affected one.
                 // Flipping to OVERDUE changes both totalOverdue and the aging buckets.
                 evictReports(inv);
+                queueSearchIndex(inv);
                 count++;
             }
         }

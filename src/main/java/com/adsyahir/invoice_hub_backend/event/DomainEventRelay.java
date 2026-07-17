@@ -57,6 +57,11 @@ public class DomainEventRelay {
         publish(KafkaTopicConfig.EINVOICE_COMMANDS, event.tenantId(), event.eventId(), event);
     }
 
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onSearchIndexRequested(SearchIndexRequested event) {
+        publish(KafkaTopicConfig.SEARCH_INDEX, event.tenantId(), event.eventId(), event);
+    }
+
     private void publish(String topic, Long tenantId, String eventId, Object payload) {
         kafka.send(topic, String.valueOf(tenantId), payload)
                 .whenComplete((result, error) -> {

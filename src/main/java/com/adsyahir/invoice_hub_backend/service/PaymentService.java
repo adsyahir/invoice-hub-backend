@@ -8,6 +8,7 @@ import com.adsyahir.invoice_hub_backend.enums.InvoiceStatus;
 import com.adsyahir.invoice_hub_backend.enums.PaymentMethod;
 import com.adsyahir.invoice_hub_backend.enums.PaymentStatus;
 import com.adsyahir.invoice_hub_backend.event.PaymentRecordedEvent;
+import com.adsyahir.invoice_hub_backend.event.SearchIndexRequested;
 import com.adsyahir.invoice_hub_backend.model.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -274,6 +275,11 @@ public class PaymentService {
         // goes through its proxy and @CacheEvict actually fires (a same-bean call would not).
         if (invoice.getTenant() != null) {
             reportCacheEvictor.evict(invoice.getTenant().getId());
+
+            // Same choke-point logic for search: status/amounts are indexed, so refresh
+            // the invoice's Elasticsearch document (async, via Kafka, after commit).
+            events.publishEvent(SearchIndexRequested.invoice(
+                    invoice.getTenant().getId(), invoice.getId()));
         }
     }
 

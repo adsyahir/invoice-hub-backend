@@ -1,5 +1,7 @@
 package com.adsyahir.invoice_hub_backend.support;
 
+import com.adsyahir.invoice_hub_backend.search.ClientSearchRepo;
+import com.adsyahir.invoice_hub_backend.search.InvoiceSearchRepo;
 import com.redis.testcontainers.RedisContainer;
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
@@ -15,6 +17,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.elasticsearch.ElasticsearchContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import static org.mockito.BDDMockito.given;
@@ -60,10 +63,21 @@ public abstract class AbstractIntegrationTest {
     private static final RedisContainer REDIS =
             new RedisContainer(DockerImageName.parse("redis:7-alpine"));
 
+    /**
+     * Real Elasticsearch, so the search-index consumer and the query DSL are genuinely exercised
+     * end to end. Security is off (dev/test convenience) and the heap is kept small so the
+     * container starts fast in CI.
+     */
+    private static final ElasticsearchContainer ELASTICSEARCH =
+            new ElasticsearchContainer("docker.elastic.co/elasticsearch/elasticsearch:9.2.0")
+                    .withEnv("xpack.security.enabled", "false")
+                    .withEnv("ES_JAVA_OPTS", "-Xms256m -Xmx256m");
+
     static {
         POSTGRES.start();
         KAFKA.start();
         REDIS.start();
+        ELASTICSEARCH.start();
     }
 
     @DynamicPropertySource
@@ -77,6 +91,9 @@ public abstract class AbstractIntegrationTest {
 
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getFirstMappedPort());
+
+        registry.add("spring.elasticsearch.uris",
+                () -> "http://" + ELASTICSEARCH.getHost() + ":" + ELASTICSEARCH.getMappedPort(9200));
     }
 
     @Autowired
@@ -88,10 +105,23 @@ public abstract class AbstractIntegrationTest {
     @Autowired
     protected StringRedisTemplate redis;
 
+    @Autowired
+    protected InvoiceSearchRepo invoiceSearchRepo;
+
+    @Autowired
+    protected ClientSearchRepo clientSearchRepo;
+
     /** Clear the cache + rate-limit counters between tests so nothing leaks across them. */
     @BeforeEach
     void flushRedis() {
         redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+    }
+
+    /** Empty both search indices between tests so hits never leak across them. */
+    @BeforeEach
+    void flushSearchIndices() {
+        invoiceSearchRepo.deleteAll();
+        clientSearchRepo.deleteAll();
     }
 
     /**
