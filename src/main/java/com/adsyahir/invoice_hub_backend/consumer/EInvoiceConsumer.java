@@ -5,6 +5,8 @@ import com.adsyahir.invoice_hub_backend.dao.InvoiceRepo;
 import com.adsyahir.invoice_hub_backend.enums.EInvoiceStatus;
 import com.adsyahir.invoice_hub_backend.event.EInvoiceSubmissionRequested;
 import com.adsyahir.invoice_hub_backend.model.Invoice;
+import com.adsyahir.invoice_hub_backend.myinvois.MyInvoisClient;
+import com.adsyahir.invoice_hub_backend.myinvois.MyInvoisResult;
 import com.adsyahir.invoice_hub_backend.service.AuditService;
 import com.adsyahir.invoice_hub_backend.service.NotificationService;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +20,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 /**
  * Submits an invoice to LHDN MyInvois and records the outcome.
@@ -49,6 +50,7 @@ public class EInvoiceConsumer {
     private final InvoiceRepo invoiceRepo;
     private final AuditService auditService;
     private final NotificationService notificationService;
+    private final MyInvoisClient myInvoisClient;
 
     /**
      * 5 attempts with a longer backoff than the email consumer (5s, 10s, 20s, 40s): a tax
@@ -77,22 +79,24 @@ public class EInvoiceConsumer {
 
         log.info("Submitting invoice {} to MyInvois", invoice.getInvoiceNumber());
 
-        // --- SIMULATED LHDN validation (see TODO above) ---
-        LocalDateTime now = LocalDateTime.now();
-        String lhdnUuid = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-        String longId = lhdnUuid + invoice.getInvoiceNumber().replaceAll("\\D", "");
+        // The call goes through MyInvoisClient's circuit breaker. If MyInvois is down the breaker
+        // fails fast with MyInvoisUnavailableException; we let it propagate so @RetryableTopic
+        // reschedules — the invoice stays PENDING, never faked to VALIDATED.
+        MyInvoisResult result = myInvoisClient.submit(invoice);
 
+        LocalDateTime now = LocalDateTime.now();
         invoice.setEinvoiceStatus(EInvoiceStatus.VALIDATED);
-        invoice.setMyinvoisUuid(lhdnUuid);
-        invoice.setMyinvoisLongId(longId);
-        invoice.setEinvoiceValidationUrl(MYINVOIS_PORTAL + "/" + lhdnUuid + "/share/" + longId);
+        invoice.setMyinvoisUuid(result.uuid());
+        invoice.setMyinvoisLongId(result.longId());
+        invoice.setEinvoiceValidationUrl(
+                MYINVOIS_PORTAL + "/" + result.uuid() + "/share/" + result.longId());
         invoice.setEinvoiceValidatedAt(now);
         invoice.setEinvoiceRejectionReason(null);
 
         Invoice saved = invoiceRepo.save(invoice);
 
         auditService.record(saved.getTenant(), "INVOICE", saved.getId(), "EINVOICE_VALIDATED", null,
-                "MyInvois validated " + saved.getInvoiceNumber() + " (uuid " + lhdnUuid + ")");
+                "MyInvois validated " + saved.getInvoiceNumber() + " (uuid " + result.uuid() + ")");
         notificationService.notify(saved.getTenant(), "EINVOICE_VALIDATED",
                 "E-invoice validated: " + saved.getInvoiceNumber(),
                 saved.getInvoiceNumber() + " was validated by LHDN MyInvois.",

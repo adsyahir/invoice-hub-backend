@@ -241,6 +241,16 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- Fault tolerance: circuit breaker around the MyInvois (LHDN) call, so a
+		     tax-authority outage trips fast instead of hanging every submission.
+		     The spring-boot4 starter is the Boot-4/Spring-7 build; it is not yet in
+		     the Boot BOM, so the version is pinned explicitly. -->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-spring-boot4</artifactId>
+			<version>2.4.0</version>
+		</dependency>
+
 	</dependencies>
 
 	<build>

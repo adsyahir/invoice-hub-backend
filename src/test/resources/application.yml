@@ -92,6 +92,23 @@ jwt:
   secret: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   access-token-minutes: 30
 
+# Mirrors the main application.yml (this file SHADOWS it — an omitted block falls back to
+# Resilience4j's defaults, which are minimum-number-of-calls: 100, so the breaker would never
+# trip in a short test and EInvoiceCircuitBreakerIT would fail).
+resilience4j:
+  circuitbreaker:
+    instances:
+      myinvois:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - com.adsyahir.invoice_hub_backend.myinvois.MyInvoisUnavailableException
+
 logging:
   level:
     org.testcontainers: INFO

@@ -119,8 +119,33 @@ app:
   cookie:
     secure: false
 
+  # MyInvois (LHDN) integration. The submission is still simulated; flip this to true
+  # to make every call fail, so the circuit breaker can be demonstrated end to end.
+  myinvois:
+    simulate-outage: ${MYINVOIS_SIMULATE_OUTAGE:false}
+
 # JWT — STABLE signing key (do NOT regenerate per restart, or all tokens break).
 # Reads the JWT_SECRET env var in production; falls back to a dev key locally.
 jwt:
   secret: ${JWT_SECRET:2bda0e8dfe4c0b5b0a4e11ece648c0370d5921368eae7f80f0a7a1eb71441b8b}
   access-token-minutes: 30
+
+# Fault tolerance for the MyInvois (LHDN) call. COUNT_BASED window: once at least
+# minimum-number-of-calls have been recorded and the failure rate crosses the threshold,
+# the breaker trips OPEN and short-circuits calls for wait-duration-in-open-state. It then
+# moves to HALF_OPEN and lets a few probe calls through before closing (auto-transition) —
+# so a recovered MyInvois heals the breaker on its own, no restart needed.
+resilience4j:
+  circuitbreaker:
+    instances:
+      myinvois:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50          # % of recent calls that must fail to trip OPEN
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        # A transient outage is exactly what should trip the breaker.
+        record-exceptions:
+          - com.adsyahir.invoice_hub_backend.myinvois.MyInvoisUnavailableException
