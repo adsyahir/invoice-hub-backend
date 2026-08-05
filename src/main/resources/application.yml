@@ -130,6 +130,27 @@ jwt:
   secret: ${JWT_SECRET:2bda0e8dfe4c0b5b0a4e11ece648c0370d5921368eae7f80f0a7a1eb71441b8b}
   access-token-minutes: 30
 
+# Stripe. Both secrets are the PLATFORM's, shared across tenants — a connected account
+# is addressed by id, never by its own key. Leave them unset to run without payments:
+# the payouts endpoints then 404 and the frontend hides the onboarding step.
+stripe:
+  key: ${STRIPE_API_KEY:}
+  # Signing secret for POST /api/webhooks/stripe (whsec_…). Locally it's what
+  # `stripe listen --forward-to localhost:8100/api/webhooks/stripe` prints — a webhook
+  # can't reach a laptop otherwise. Empty means reject everything, never "skip the check".
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  connect:
+    # ISO 3166-1 alpha-2 country the connected accounts are created in.
+    country: ${STRIPE_CONNECT_COUNTRY:MY}
+    # Which dashboard tenants get: EXPRESS (platform-branded), FULL (their own Stripe
+    # account) or NONE (Custom).
+    dashboard: ${STRIPE_CONNECT_DASHBOARD:EXPRESS}
+    # Who owns losses: STRIPE or PLATFORM. Malaysia only has the Stripe-liable model
+    # generally available — platform-liable is preview and needs Stripe Support approval,
+    # and asking for it without that is rejected at account creation. Fees follow
+    # liability, so STRIPE also means the platform takes no application fee.
+    loss-liability: ${STRIPE_CONNECT_LOSS_LIABILITY:STRIPE}
+
 # Fault tolerance for the MyInvois (LHDN) call. COUNT_BASED window: once at least
 # minimum-number-of-calls have been recorded and the failure rate crosses the threshold,
 # the breaker trips OPEN and short-circuits calls for wait-duration-in-open-state. It then

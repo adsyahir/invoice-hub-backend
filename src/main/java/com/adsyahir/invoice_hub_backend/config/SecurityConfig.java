@@ -64,6 +64,10 @@ public class SecurityConfig {
                         .requestMatchers("/auth/register", "/auth/login", "/auth/refresh", "/auth/logout","/teams/invite/accept").permitAll()
                         .requestMatchers("/auth/forgot-password", "/auth/reset-password").permitAll()
                         .requestMatchers("/public/**").permitAll()
+                        // Stripe can't send a JWT — the HMAC signature check inside
+                        // StripeWebhookController is the authentication. Kept off
+                        // /public/** so the rate limiter can't throttle Stripe's retries.
+                        .requestMatchers("/webhooks/stripe").permitAll()
                         .anyRequest().authenticated())
                 // No httpBasic/formLogin: this is a JWT API consumed by a SPA.
                 // 401 (bare, no WWW-Authenticate header) when unauthenticated so the

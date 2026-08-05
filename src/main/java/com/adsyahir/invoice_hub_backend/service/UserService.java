@@ -10,8 +10,10 @@ import com.adsyahir.invoice_hub_backend.model.Permission;
 import com.adsyahir.invoice_hub_backend.model.Role;
 import com.adsyahir.invoice_hub_backend.model.Tenant;
 import com.adsyahir.invoice_hub_backend.model.User;
+import com.adsyahir.invoice_hub_backend.event.TenantRegisteredEvent;
 import com.adsyahir.invoice_hub_backend.exception.ValidationException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +38,9 @@ public class UserService {
 
     @Autowired
     private RefreshTokenService refreshTokenService;
+
+    @Autowired
+    private ApplicationEventPublisher events;
 
     private BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(12);
 
@@ -73,7 +78,14 @@ public class UserService {
         user.setRole(adminRole);
         user.setTenant(tenant);
 
-        return repo.save(user);
+        User saved = repo.save(user);
+
+        // Provisioning that must NOT be able to fail signup — currently the tenant's
+        // Stripe Express account. Listeners run AFTER_COMMIT, so a Stripe outage can't
+        // roll back an otherwise valid organization.
+        events.publishEvent(new TenantRegisteredEvent(tenant.getId(), saved.getEmail()));
+
+        return saved;
     }
 
     /** Loads the persisted user (with tenant) by email — used after login auth. */

@@ -197,6 +197,60 @@ public class PaymentService {
         return toResponse(payment);
     }
 
+    /**
+     * Book a Stripe Checkout payment. Called from the webhook, never from a request.
+     *
+     * <p>The webhook is the only trustworthy signal that money moved: the payer's browser
+     * returning to the success URL proves nothing (they can close the tab, or forge the
+     * URL), whereas this payload is signature-verified and comes from Stripe.
+     *
+     * <p>Idempotent on {@code gatewayTxnId} because Stripe delivers at-least-once and
+     * retries every non-2xx — without the guard, one retry books a second payment and the
+     * invoice goes over-paid.
+     *
+     * @param amount what Stripe actually collected, NOT the invoice balance — a partial or
+     *               over-payment must be recorded as it happened
+     * @return true if this call recorded a new payment, false if it was a duplicate
+     */
+    @Transactional
+    public boolean recordStripePayment(Long invoiceId, BigDecimal amount, String currency,
+                                       String gatewayTxnId) {
+        if (gatewayTxnId != null && paymentRepo.existsByGatewayTxnId(gatewayTxnId)) {
+            return false;
+        }
+
+        Invoice invoice = invoiceRepo.findById(invoiceId)
+                .orElseThrow(() -> new IllegalStateException("Invoice " + invoiceId + " not found"));
+
+        Payment payment = paymentRepo.save(Payment.builder()
+                .tenant(invoice.getTenant())
+                .invoice(invoice)
+                .amount(amount.setScale(2, RoundingMode.HALF_UP))
+                .currency(currency)
+                .method(PaymentMethod.CARD)
+                .status(PaymentStatus.COMPLETED)
+                .gateway("STRIPE")
+                .gatewayTxnId(gatewayTxnId)
+                .recordedBy(null)
+                .paidAt(LocalDateTime.now())
+                .build());
+
+        recomputeAndSaveInvoice(invoice);
+        auditService.record(invoice.getTenant(), "PAYMENT", payment.getId(), "PAID_STRIPE", null,
+                "Stripe payment of " + currency + " " + amount + " (" + gatewayTxnId + ")");
+        notifyPayment(invoice, amount, "Online payment received");
+
+        events.publishEvent(PaymentRecordedEvent.of(
+                invoice.getTenant().getId(),
+                invoice.getId(),
+                payment.getUuid(),
+                amount,
+                invoice.getCurrency(),
+                invoice.getStatus() == InvoiceStatus.PAID));
+
+        return true;
+    }
+
     @Transactional(readOnly = true)
     public List<PaymentResponse> list(User currentUser) {
         if (currentUser.getTenant() == null) {

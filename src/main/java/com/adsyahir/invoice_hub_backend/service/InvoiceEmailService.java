@@ -79,12 +79,11 @@ public class InvoiceEmailService {
                     <p>Hello,</p>
                     <p>Please find attached invoice <strong>%s</strong> for <strong>%s %s</strong>,
                     due %s.</p>
-                    <p>You can view and pay online here:<br/>
-                    <a href="%s">%s</a></p>
+                    %s
                     <p>Thank you,<br/>%s</p>
                     """.formatted(
                     invoice.getInvoiceNumber(), invoice.getCurrency(), nz(invoice.getAmountDue()),
-                    invoice.getDueDate(), payLink, payLink, org), true);
+                    invoice.getDueDate(), payBlock(invoice, payLink), org), true);
             helper.addAttachment(invoice.getInvoiceNumber() + ".pdf",
                     new ByteArrayResource(pdf), "application/pdf");
         } catch (jakarta.mail.MessagingException e) {
@@ -96,6 +95,33 @@ public class InvoiceEmailService {
 
         mailSender.send(message);
         log.info("Emailed invoice {} to {}", invoice.getInvoiceNumber(), to);
+    }
+
+    /**
+     * The "pay online" section of the invoice email.
+     *
+     * <p>The link is the durable {@code /pay/{token}} page, never a Stripe Checkout URL:
+     * sessions expire in 24 hours and an invoice can sit in an inbox for weeks. That page
+     * mints a fresh session when the payer actually clicks.
+     *
+     * <p>The card/FPX wording is dropped when the tenant hasn't finished Stripe onboarding,
+     * so we don't promise a payment method that would dead-end. The invoice itself still
+     * goes out — plenty of businesses get paid by transfer.
+     */
+    private String payBlock(Invoice invoice, String payLink) {
+        boolean online = invoice.getTenant() != null && invoice.getTenant().isStripeChargesEnabled();
+
+        if (!online) {
+            return """
+                    <p>You can view this invoice online here:<br/>
+                    <a href="%s">%s</a></p>
+                    """.formatted(payLink, payLink);
+        }
+        return """
+                <p>You can view and pay this invoice online — card or FPX, processed securely
+                by Stripe:<br/>
+                <a href="%s">%s</a></p>
+                """.formatted(payLink, payLink);
     }
 
     /** Receipt for a payment against an invoice. */

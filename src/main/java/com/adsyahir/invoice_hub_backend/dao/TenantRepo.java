@@ -13,4 +13,7 @@ public interface TenantRepo extends JpaRepository<Tenant, Long> {
     Tenant findBySlug(String slug);
     boolean existsBySlug(String slug);
     Optional<Tenant> findByUuid(UUID uUid);
+
+    /** Resolves a Stripe webhook payload back to the tenant that owns the account. */
+    Optional<Tenant> findByStripeAccountId(String stripeAccountId);
 }

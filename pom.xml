@@ -251,6 +251,13 @@
 			<version>2.4.0</version>
 		</dependency>
 
+		<!-- Payments + Connect payouts. Not in the Boot BOM, so the version is pinned. -->
+		<dependency>
+			<groupId>com.stripe</groupId>
+			<artifactId>stripe-java</artifactId>
+			<version>33.2.0</version>
+		</dependency>
+
 	</dependencies>
 
 	<build>

@@ -50,6 +50,32 @@ public class Tenant {
     @Column(name = "max_invoices_per_month", nullable = false)
     private Integer maxInvoicesPerMonth = 10;
 
+    // --- Stripe Connect (Express) ---
+    // A cache of the connected account's state, refreshed from the account.updated
+    // webhook. Stripe owns these values; nothing here should set chargesEnabled itself.
+
+    @Column(name = "stripe_account_id", unique = true)
+    private String stripeAccountId;
+
+    @Column(name = "stripe_charges_enabled", nullable = false)
+    private boolean stripeChargesEnabled = false;
+
+    @Column(name = "stripe_payouts_enabled", nullable = false)
+    private boolean stripePayoutsEnabled = false;
+
+    @Column(name = "stripe_details_submitted", nullable = false)
+    private boolean stripeDetailsSubmitted = false;
+
+    @Column(name = "stripe_disabled_reason")
+    private String stripeDisabledReason;
+
+    /** requirements.currently_due, comma-separated. Null when nothing is due. */
+    @Column(name = "stripe_requirements", columnDefinition = "text")
+    private String stripeRequirements;
+
+    @Column(name = "stripe_synced_at")
+    private LocalDateTime stripeSyncedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

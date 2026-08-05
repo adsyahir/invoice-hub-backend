@@ -21,4 +21,8 @@ public interface PaymentRepo extends JpaRepository<Payment, Long> {
     // Tenant-scoped single lookup by the PUBLIC uuid (IDOR guard): a payment owned
     // by another tenant simply isn't found.
     Optional<Payment> findByUuidAndTenantId(UUID uuid, Long tenantId);
+
+    // Webhook idempotency: Stripe delivers at-least-once and retries on any non-2xx, so
+    // "have I already booked this charge?" has to be answerable before recording it.
+    boolean existsByGatewayTxnId(String gatewayTxnId);
 }
